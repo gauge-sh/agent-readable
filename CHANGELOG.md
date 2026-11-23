@@ -1,16 +1,10 @@
 # Changelog
 
-## 0.1.0 — unreleased
+## 0.1.0
 
-First standalone release candidate.
+Serve a Markdown version of a page at its `.md` URL or at the original URL when a client requests `text/markdown`. HTML pages advertise their Markdown version so clients can discover it.
 
-- Next.js adapter factories for Proxy and route handlers, plus a custom-server helper. Content stays in the app; query forwarding, request classification, responses, and server error handling live in the package.
-- Runtime handler with query-aware content resolvers, quality-weighted negotiation, x-markdown, suffix/index aliases, HEAD/404 responses, and conservative no-store caching. Tested against an existing Next.js app. A Node HTTP adapter preserves final Vary/discovery headers even when the framework overwrites earlier headers.
-- Optional Gauge attribution in generated llms.txt, enabled by default with an `attribution: false` opt-out. Package author and copyright identify Gauge.
-- Per-page custom Markdown files served verbatim, with HTML conversion as the fallback and manifest-aware verification.
-- Static HTML conversion, Markdown URLs, Accept negotiation, discovery links, and llms.txt.
-- Vercel Git-build setup and compatibility checks; configurable static export directories.
-- Strict configuration validation and protection against symlinked input/output paths.
-- Remove unsafe URL schemes during conversion and support heading-only selectors.
-- Reject empty checker inventories and cross-origin redirects.
-- Automated tests, packed-install smoke checks, CI, and contributor/release documentation.
+- **Static sites on Vercel.** Generate Markdown from exported HTML, override individual pages with hand-authored files, and generate an `llms.txt` index. The CLI configures the Vercel build and routing.
+- **Next.js and Node servers.** Serve Markdown from your existing content source with access to the original request and query parameters. The Node and Next.js custom-server adapters preserve the final HTML discovery and cache headers.
+- **Automatic agent routing.** Enable `userAgents` to serve Markdown to recognized coding agents, AI crawlers, and curl on ordinary page URLs. Supply your own list to customize matching.
+- **Deployment verification.** Run `agent-readable check` with the build manifest to verify discovery links, content types, cache headers, and matching direct and negotiated Markdown across the site.

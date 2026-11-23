@@ -15,7 +15,7 @@ server. This adapter does not turn an SSR app into a static export.
 
 ## 1. Define your content callbacks
 
-[Install the candidate as a production dependency](https://github.com/gauge-sh/agent-readable/blob/main/docs/installation.md).
+[Install agent-readable as a production dependency](https://github.com/gauge-sh/agent-readable/blob/main/docs/installation.md).
 Create `lib/markdown-options.js`:
 
 ```js

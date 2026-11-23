@@ -1,11 +1,10 @@
-# Install the candidate package
+# Install agent-readable
 
 [Overview](https://github.com/gauge-sh/agent-readable/blob/main/README.md) · [Static sites](https://github.com/gauge-sh/agent-readable/blob/main/docs/static.md) · [Existing servers](https://github.com/gauge-sh/agent-readable/blob/main/docs/runtime.md)
 
-Version 0.1.0 is not yet published to npm. Clone this repository to build
-the current candidate. Use Node.js 22 or newer.
+Use Node.js 22 or newer. For a static site, install agent-readable as a development dependency and include development dependencies in the site build. For a Next.js or Node server that serves Markdown at request time, install it as a production dependency.
 
-## Build a tarball
+## Install from source
 
 From a checkout of `gauge-sh/agent-readable`:
 
@@ -24,7 +23,6 @@ Run the install command from your site's root, choosing the dependency type belo
 | Runtime server | `npm install ./vendor/agent-readable-0.1.0.tgz` | Must be installed when the server runs |
 
 Commit the tarball, package manifest, and lockfile to the site repository if the
-host builds from Git. The build environment must install development dependencies
-when using the static integration.
+host builds from Git.
 
 Continue with [static sites](https://github.com/gauge-sh/agent-readable/blob/main/docs/static.md) or [existing servers](https://github.com/gauge-sh/agent-readable/blob/main/docs/runtime.md).
