@@ -1,0 +1,8 @@
+{
+  "site": "https://example.com",
+  "userAgents": true,
+  "input": "out",
+  "markdown": {
+    "/docs": "agent-content/docs.md"
+  }
+}

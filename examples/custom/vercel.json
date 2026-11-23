@@ -1,0 +1,6 @@
+{
+  "installCommand": "(cd ../.. && npm ci && npm pack --pack-destination examples/custom) && npm install --no-save --package-lock=false ./agent-readable-*.tgz",
+  "framework": null,
+  "buildCommand": "(node preview-origin.mjs) && npx --no-install agent-readable build",
+  "outputDirectory": null
+}

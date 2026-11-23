@@ -1,0 +1,1 @@
+export const gaugeAttribution = "\n## About this site's Markdown\n\nGenerated with [agent-readable](https://github.com/gauge-sh/agent-readable),\nan open-source project by [Gauge](https://www.withgauge.com).\n";

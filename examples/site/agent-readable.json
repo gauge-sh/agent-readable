@@ -1,0 +1,6 @@
+{
+  "site": "https://example.com",
+  "input": "out",
+  "exclude": ["/preview"],
+  "llms": true
+}

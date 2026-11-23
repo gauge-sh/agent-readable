@@ -1,0 +1,63 @@
+{
+  "name": "agent-readable",
+  "version": "0.1.0",
+  "description": "Serve clean Markdown versions of your website to AI coding agents and search crawlers—statically or at runtime.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "bin": {
+    "agent-readable": "src/cli.js"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./runtime": "./src/runtime.js",
+    "./node": "./src/node.js",
+    "./next": "./src/next.js",
+    "./next/server": "./src/next-server.js"
+  },
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "demo": "node src/cli.js build --cwd examples/site",
+    "lint": "node scripts/check-syntax.js",
+    "test:package": "node scripts/smoke-package.js",
+    "check": "npm run lint && npm test && npm run test:package",
+    "prepublishOnly": "npm run check",
+    "smoke:agent": "node examples/agent-smoke/run.mjs"
+  },
+  "dependencies": {
+    "@mintlify/agent-traffic": "0.1.0",
+    "cheerio": "1.1.2",
+    "turndown": "7.2.4",
+    "turndown-plugin-gfm": "1.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/gauge-sh/agent-readable.git"
+  },
+  "homepage": "https://github.com/gauge-sh/agent-readable#readme",
+  "bugs": {
+    "url": "https://github.com/gauge-sh/agent-readable/issues"
+  },
+  "keywords": [
+    "ai-agents",
+    "coding-agents",
+    "markdown",
+    "llms-txt",
+    "content-negotiation",
+    "nextjs",
+    "vercel",
+    "claude-code",
+    "codex"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "author": "Gauge"
+}

@@ -1,0 +1,350 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtemp, mkdir, writeFile, readFile, rm, access, cp, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { init, build, convert, check, routesFor } from '../src/index.js';
+
+async function fixture(t) {
+  const cwd = await mkdtemp(path.join(tmpdir(), 'agent-readable-test-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  await cp(new URL('../examples/site/', import.meta.url), cwd, { recursive: true, filter: p => !p.includes('.vercel') });
+  return cwd;
+}
+
+test('conversion retains tables, code, relative links and content; removes UI noise', () => {
+  const result = convert('<title>Docs</title><nav>Noise</nav><main><h1>Docs</h1><a href="../start?q=1#install">Start</a><img src="./image.png" alt="Diagram"><pre><code class="language-js">const x = 1;</code></pre><table><thead><tr><th>Plan</th></tr></thead><tbody><tr><td>Free</td></tr></tbody></table><span hidden>Secret UI</span><div data-agent-readable="exclude">Mock dashboard</div><script>evil()</script></main>', 'https://example.com/docs/guide/');
+  assert.match(result.markdown, /https:\/\/example.com\/docs\/start\?q=1#install/);
+  assert.match(result.markdown, /https:\/\/example.com\/docs\/guide\/image.png/);
+  assert.match(result.markdown, /```js\nconst x = 1;/);
+  assert.match(result.markdown, /\| Plan \|/);
+  assert.doesNotMatch(result.markdown, /Noise|Secret UI|Mock dashboard|evil/);
+  assert.throws(() => convert('<body>Oops</body>', 'https://example.com'), /no content matching/);
+});
+
+test('init never overwrites config', async t => {
+  const cwd = await fixture(t);
+  await assert.rejects(init(cwd, 'https://example.com'), /EEXIST/);
+  await assert.rejects(init(cwd, 'file:///tmp'), /HTTP/);
+});
+
+test('build produces Markdown, discovery, precise routes and preserves original export', async t => {
+  const cwd = await fixture(t);
+  await writeFile(path.join(cwd, 'out/hidden.html'), '<meta name="robots" content="noindex"><main>Private</main>');
+  const result = await build(cwd);
+  assert.equal(result.pages.length, 2);
+  assert.deepEqual(result.skipped, ['/hidden', '/preview']);
+  const output = path.join(cwd, '.vercel/output');
+  const md = await readFile(path.join(output, 'static/docs.md'), 'utf8');
+  assert.match(md, /npm install example-sdk/);
+  assert.match(await readFile(path.join(output, 'static/docs/index.html'), 'utf8'), /type="text\/markdown" href="\/docs.md"/);
+  assert.doesNotMatch(await readFile(path.join(cwd, 'out/docs/index.html'), 'utf8'), /text\/markdown/);
+  await assert.rejects(access(path.join(output, 'static/preview.md')));
+  const llms = await readFile(path.join(output, 'static/llms.txt'), 'utf8');
+  assert.match(llms, /https:\/\/example.com\/docs.md/);
+  assert.doesNotMatch(llms, /preview|hidden/);
+  const config = JSON.parse(await readFile(path.join(output, 'config.json'), 'utf8'));
+  assert.equal(config.version, 3);
+  assert.ok(config.routes.some(r => r.dest === '/preview/index.html'));
+  assert.ok(!config.routes.some(r => r.dest === '/preview.md'));
+  await build(cwd); // A second build replaces only our own artifact.
+});
+
+test('build stops on conflicting deployment config, native Markdown, and unowned output', async t => {
+  const cwd = await fixture(t);
+  await writeFile(path.join(cwd, 'vercel.json'), '{"redirects":[]}');
+  await assert.rejects(build(cwd), /Existing vercel.json/);
+  await rm(path.join(cwd, 'vercel.json'));
+  await writeFile(path.join(cwd, 'out/docs.md'), '# Existing');
+  await assert.rejects(build(cwd), /Existing Markdown/);
+  await rm(path.join(cwd, 'out/docs.md'));
+  await mkdir(path.join(cwd, '.vercel/output'), { recursive: true });
+  await assert.rejects(build(cwd), /Refusing to replace/);
+});
+
+test('routing requires an explicit Markdown media range and respects q=0', () => {
+  const routes = routesFor([{ route: '/docs', file: 'docs/index.html', markdown: '/docs.md' }]);
+  const regex = new RegExp(routes.find(r => r.has).has[0].value);
+  for (const accept of ['text/markdown', 'text/markdown;q=0.8', 'text/html, text/markdown', 'TEXT/MARKDOWN', 'text/markdown, */*']) assert.ok(regex.test(accept), accept);
+  for (const accept of ['text/html', '*/*', 'text/markdown;q=0', 'text/markdown;q=0.000', 'text/markdown; charset=utf-8;q=0, text/html', 'application/text/markdown', 'text/markdown-extra']) assert.ok(!regex.test(accept), accept);
+  assert.equal(routes[0].headers.Vary, 'Accept');
+});
+
+// A small local harness exercises the generated route definitions, not Vercel's CDN.
+async function serveArtifact(t, cwd, broken = false) {
+  const output = path.join(cwd, '.vercel/output');
+  const { routes } = JSON.parse(await readFile(path.join(output, 'config.json'), 'utf8'));
+  const server = createServer(async (req, res) => {
+    try {
+      const pathname = new URL(req.url, 'http://localhost').pathname;
+      let destination = pathname;
+      for (const r of routes) {
+        if (r.handle) break;
+        if (!new RegExp(r.src).test(pathname)) continue;
+        if (r.has && (broken || !r.has.every(h => new RegExp(h.value).test(req.headers[h.key] || '')))) continue;
+        for (const [k,v] of Object.entries(r.headers || {})) res.setHeader(k,v);
+        if (r.dest) { destination = r.dest; break; }
+      }
+      const body = await readFile(path.join(output, 'static', destination));
+      if (!res.hasHeader('Content-Type')) res.setHeader('Content-Type', destination.endsWith('.md') ? 'text/markdown' : 'text/html');
+      res.end(body);
+    } catch { res.writeHead(404); res.end('Not found'); }
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  return `http://127.0.0.1:${server.address().port}`;
+}
+
+test('checker passes a working artifact and reports broken negotiation', async t => {
+  const cwd = await fixture(t);
+  await build(cwd);
+  const site = await serveArtifact(t, cwd);
+  const good = await check(site, ['/', '/docs/']);
+  assert.equal(good.ok, true, JSON.stringify(good));
+  const brokenSite = await serveArtifact(t, cwd, true);
+  const bad = await check(brokenSite, ['/docs/']);
+  assert.equal(bad.ok, false);
+  assert.equal(bad.pages[0].checks.find(c => c.name === 'Negotiated Markdown response').ok, false);
+  assert.equal((await check(site, ['/missing'])).ok, false);
+});
+
+test('CLI builds example and exits nonzero on invalid command', async t => {
+  const cwd = await fixture(t);
+  const cli = new URL('../src/cli.js', import.meta.url).pathname;
+  assert.match(execFileSync(process.execPath, [cli, 'build', '--cwd', cwd], { encoding: 'utf8' }), /Generated 2 Markdown pages/);
+  assert.equal(spawnSync(process.execPath, [cli, 'unknown']).status, 1);
+});
+
+ test('custom selectors remove Webflow chrome without losing article content', () => {
+  const html = '<title>Article</title><body><div class="navigation">Navigation</div><div class="title-section"><h1>Article</h1></div><div class="post-content"><p>Useful content</p></div><div class="footer">Subscribe noise</div></body>';
+  const result = convert(html, 'https://example.com/article', 'body', ['.navigation', '.footer']);
+  assert.match(result.markdown, /# Article/);
+  assert.match(result.markdown, /Useful content/);
+  assert.doesNotMatch(result.markdown, /Navigation|Subscribe noise/);
+  assert.throws(() => convert(html, 'https://example.com', 'body', 'footer'), /excludeSelectors/);
+});
+
+test('Vercel Git setup replaces framework settings, preserves unrelated settings and is repeatable', async t => {
+  const { setupVercel, validateVercel } = await import('../src/index.js');
+  const cwd = await fixture(t);
+  await writeFile(path.join(cwd, 'vercel.json'), JSON.stringify({ framework: 'nextjs', outputDirectory: 'out', regions: ['iad1'], installCommand: 'npm ci' }));
+  await assert.rejects(validateVercel(cwd, true), /discard the Markdown artifact/);
+  const config = await setupVercel(cwd, 'npm run build:site');
+  assert.equal(config.framework, null);
+  assert.equal(config.outputDirectory, null);
+  assert.equal(config.buildCommand, '(npm run build:site) && npx --no-install agent-readable build');
+  assert.deepEqual(config.regions, ['iad1']);
+  assert.equal(config.installCommand, 'npm ci');
+  assert.deepEqual(await setupVercel(cwd, 'npm run build:site'), config);
+  await validateVercel(cwd, true);
+  await build(cwd);
+});
+
+test('Vercel setup refuses incompatible configurations without changing them', async t => {
+  const { setupVercel } = await import('../src/index.js');
+  const cwd = await fixture(t);
+  for (const config of [{ rewrites: [] }, { builds: [] }, { functions: {} }]) {
+    const original = JSON.stringify(config);
+    await writeFile(path.join(cwd, 'vercel.json'), original);
+    await assert.rejects(setupVercel(cwd, 'hugo'), /automatic merging/);
+    assert.equal(await readFile(path.join(cwd, 'vercel.json'), 'utf8'), original);
+  }
+  await rm(path.join(cwd, 'vercel.json'));
+  await writeFile(path.join(cwd, 'vercel.ts'), 'export default {}');
+  await assert.rejects(setupVercel(cwd, 'hugo'), /vercel.ts/);
+  await assert.rejects(setupVercel(cwd, 'hugo && agent-readable build'), /only the site build/);
+});
+
+test('CLI supports arbitrary static export directories and nested HTML routes', async t => {
+  const cwd = await mkdtemp(path.join(tmpdir(), 'agent-readable-framework-'));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const cli = new URL('../src/cli.js', import.meta.url).pathname;
+  execFileSync(process.execPath, [cli, 'init', '--cwd', cwd, '--site', 'https://example.com', '--input', 'dist/client']);
+  await mkdir(path.join(cwd, 'dist/client/guide'), { recursive: true });
+  await writeFile(path.join(cwd, 'dist/client/index.html'), '<main><h1>Home</h1></main>');
+  await writeFile(path.join(cwd, 'dist/client/guide/index.html'), '<main><h1>Guide</h1><p>Framework independent</p></main>');
+  const failed = spawnSync(process.execPath, [cli, 'build', '--cwd', cwd], { encoding: 'utf8', env: { ...process.env, VERCEL: '1' } });
+  assert.equal(failed.status, 1);
+  assert.match(failed.stderr, /setup-vercel/);
+  await assert.rejects(access(path.join(cwd, '.vercel/output')));
+  execFileSync(process.execPath, [cli, 'setup-vercel', '--cwd', cwd, '--build-command', 'npm run generate']);
+  execFileSync(process.execPath, [cli, 'build', '--cwd', cwd], { env: { ...process.env, VERCEL: '1' } });
+  const site = await serveArtifact(t, cwd);
+  assert.equal((await check(site, ['/', '/guide/'])).ok, true);
+});
+
+test('configuration rejects misspelled options, invalid lists and unsafe export paths before output changes', async t => {
+  const cwd = await fixture(t);
+  await build(cwd);
+  const original = await readFile(path.join(cwd, '.vercel/output/config.json'), 'utf8');
+  const base = JSON.parse(await readFile(path.join(cwd, 'agent-readable.json')));
+  for (const patch of [{ exclude: '/private' }, { llms: 'false' }, { attribution: 'false' }, { contentSelector: '' }, { excludeSelectors: [7] }, { input: '../outside' }, { input: '.vercel/output/static' }, { inputs: 'dist' }]) {
+    await writeFile(path.join(cwd, 'agent-readable.json'), JSON.stringify({ ...base, ...patch }));
+    await assert.rejects(build(cwd));
+    assert.equal(await readFile(path.join(cwd, '.vercel/output/config.json'), 'utf8'), original);
+  }
+});
+
+test('symlinked export roots and output parents are rejected', async t => {
+  const cwd = await fixture(t);
+  await symlink(path.join(cwd, 'out'), path.join(cwd, 'linked'), 'dir');
+  const config = JSON.parse(await readFile(path.join(cwd, 'agent-readable.json')));
+  await writeFile(path.join(cwd, 'agent-readable.json'), JSON.stringify({ ...config, input: 'linked' }));
+  await assert.rejects(build(cwd), /Symlinks/);
+  await writeFile(path.join(cwd, 'agent-readable.json'), JSON.stringify(config));
+  await mkdir(path.join(cwd, 'external'));
+  await symlink(path.join(cwd, 'external'), path.join(cwd, '.vercel'), 'dir');
+  await assert.rejects(build(cwd), /Symlinks/);
+  await assert.rejects(access(path.join(cwd, 'external/output')));
+});
+
+test('conversion removes unsafe URL schemes, preserves ordinary links, and supports an h1 root', () => {
+  const result = convert('<main><h1>Title</h1><a href=" java&#x09;script:alert(1)">bad</a><a href="vbscript:foo">bad2</a><a href="mailto:test@example.com">Email</a><img src="data:text/html,bad"><a href="/safe">Safe</a></main>', 'https://example.com');
+  assert.doesNotMatch(result.markdown, /javascript:|vbscript:|data:text/);
+  assert.match(result.markdown, /mailto:test@example.com/);
+  assert.match(result.markdown, /https:\/\/example.com\/safe/);
+  assert.match(convert('<h1>Only heading</h1>', 'https://example.com', 'h1').markdown, /# Only heading/);
+});
+
+test('checker rejects empty inventories and does not follow cross-origin redirects', async t => {
+  await assert.rejects(check('https://example.com', []), /at least one/);
+  let visited = false;
+  const target = createServer((req, res) => { visited = true; res.end('Unexpected'); });
+  target.listen(0, '127.0.0.1');
+  await once(target, 'listening');
+  const source = createServer((req, res) => { res.writeHead(302, { Location: `http://127.0.0.1:${target.address().port}/` }); res.end(); });
+  source.listen(0, '127.0.0.1');
+  await once(source, 'listening');
+  t.after(() => { source.closeAllConnections(); source.close(); target.closeAllConnections(); target.close(); });
+  const result = await check(`http://127.0.0.1:${source.address().port}`);
+  assert.equal(result.ok, false);
+  assert.match(result.pages[0].checks.at(-1).detail, /Redirect leaves/);
+  assert.equal(visited, false);
+});
+
+test('duplicate route and reserved HTML URL characters fail before artifact creation', async t => {
+  const cwd = await fixture(t);
+  await writeFile(path.join(cwd, 'out/docs.html'), '<main><h1>Duplicate</h1></main>');
+  await assert.rejects(build(cwd), /Duplicate route/);
+  await rm(path.join(cwd, 'out/docs.html'));
+  await writeFile(path.join(cwd, 'out/question?.html'), '<main><h1>Ambiguous URL</h1></main>');
+  await assert.rejects(build(cwd), /unsupported URL characters/);
+});
+
+async function setOverrides(cwd, markdown) {
+  const configPath = path.join(cwd, 'agent-readable.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  await writeFile(configPath, JSON.stringify({ ...config, markdown }));
+}
+
+test('custom Markdown is served verbatim with discovery and negotiation while other pages convert', async t => {
+  const cwd = await fixture(t);
+  const body = '---\r\naudience: agents\r\n---\r\n\r\n# A deliberately different guide\r\n\r\nFollow [this workflow](/custom-workflow).\r\n';
+  await mkdir(path.join(cwd, 'agent-content'));
+  await writeFile(path.join(cwd, 'agent-content/guide.md'), body);
+  await setOverrides(cwd, { '/docs/': 'agent-content/guide.md' });
+  const manifest = await build(cwd);
+  const custom = manifest.pages.find(page => page.route === '/docs');
+  assert.equal(custom.source, 'custom');
+  assert.equal(custom.sourceFile, 'agent-content/guide.md');
+  assert.equal(custom.bytes, Buffer.byteLength(body));
+  assert.equal(manifest.pages.find(page => page.route === '/').source, 'html');
+  assert.equal(await readFile(path.join(cwd, '.vercel/output/static/docs.md'), 'utf8'), body);
+  assert.match(await readFile(path.join(cwd, '.vercel/output/static/index.md'), 'utf8'), /^---/);
+  assert.match(await readFile(path.join(cwd, '.vercel/output/static/llms.txt'), 'utf8'), /https:\/\/example.com\/docs.md/);
+  const site = await serveArtifact(t, cwd);
+  assert.equal(await (await fetch(`${site}/docs.md`)).text(), body);
+  assert.equal(await (await fetch(`${site}/docs`, { headers: { Accept: 'text/markdown' } })).text(), body);
+  const result = await check(site, ['/', '/docs/'], { manifest });
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.ok(result.pages[0].checks.some(item => item.name === 'Page heading retained'));
+  assert.ok(!result.pages[1].checks.some(item => item.name === 'Page heading retained'));
+  assert.equal((await check(site, ['/docs'])).ok, false);
+  assert.equal((await check(site, ['/docs'], { skipHeadingCheck: true })).ok, true);
+  const { promisify } = await import('node:util');
+  const { execFile } = await import('node:child_process');
+  const cli = new URL('../src/cli.js', import.meta.url).pathname;
+  const { stdout } = await promisify(execFile)(process.execPath, [cli, 'check', site, '--cwd', cwd, '--manifest', '.vercel/output/.agent-readable', '--json']);
+  assert.equal(JSON.parse(stdout).ok, true);
+  const explicit = await promisify(execFile)(process.execPath, [cli, 'check', site, '--path', '/docs', '--skip-heading-check', '--json']);
+  assert.equal(JSON.parse(explicit.stdout).ok, true);
+});
+
+test('custom homepage bypasses extraction and existing native Markdown requires an explicit mapping', async t => {
+  const cwd = await fixture(t);
+  await writeFile(path.join(cwd, 'out/index.html'), '<title>Landing</title><div>HTML without a semantic container</div>');
+  await writeFile(path.join(cwd, 'out/index.md'), '# Agent landing\n');
+  await setOverrides(cwd, { '/': 'out/index.md' });
+  await build(cwd);
+  assert.equal(await readFile(path.join(cwd, '.vercel/output/static/index.md'), 'utf8'), '# Agent landing\n');
+  assert.equal(await readFile(path.join(cwd, 'out/index.md'), 'utf8'), '# Agent landing\n');
+  await writeFile(path.join(cwd, 'another.md'), '# Different content\n');
+  await setOverrides(cwd, { '/': 'another.md' });
+  await assert.rejects(build(cwd), /Existing Markdown would be overwritten/);
+});
+
+test('overrides fail for missing, excluded, and noindex routes instead of silently publishing', async t => {
+  const cwd = await fixture(t);
+  await writeFile(path.join(cwd, 'custom.md'), '# Custom\n');
+  await writeFile(path.join(cwd, 'out/hidden.html'), '<meta name="robots" content="noindex"><main>Hidden</main>');
+  await build(cwd);
+  const previous = await readFile(path.join(cwd, '.vercel/output/.agent-readable'), 'utf8');
+  for (const route of ['/missing', '/preview', '/hidden']) {
+    await setOverrides(cwd, { [route]: 'custom.md' });
+    await assert.rejects(build(cwd), /no eligible HTML page/);
+    assert.equal(await readFile(path.join(cwd, '.vercel/output/.agent-readable'), 'utf8'), previous);
+  }
+});
+
+test('overrides reject invalid maps, duplicate routes, escaped paths and symlinks', async t => {
+  const cwd = await fixture(t);
+  for (const markdown of [null, [], 'file.md', { docs: 'custom.md' }, { '/docs?x=1': 'custom.md' }, { '/docs/../secret': 'custom.md' }, { '/docs': '../outside.md' }, { '/docs': '/absolute.md' }, { '/docs': '.vercel/output/static/docs.md' }, { '/docs': 'custom.html' }, { '/docs': 'a.md', '/docs/': 'b.md' }]) {
+    await setOverrides(cwd, markdown);
+    await assert.rejects(build(cwd), /Markdown|markdown/);
+  }
+  await writeFile(path.join(cwd, 'custom.md'), '# Custom');
+  await symlink(path.join(cwd, 'custom.md'), path.join(cwd, 'linked.md'));
+  await setOverrides(cwd, { '/docs': 'linked.md' });
+  await assert.rejects(build(cwd), /Symlinks/);
+});
+
+test('missing, empty and HTML-document overrides fail before replacing an existing artifact', async t => {
+  const cwd = await fixture(t);
+  await build(cwd);
+  const previous = await readFile(path.join(cwd, '.vercel/output/static/docs.md'), 'utf8');
+  await setOverrides(cwd, { '/docs': 'custom.md' });
+  await assert.rejects(build(cwd), /Cannot read Markdown source/);
+  await writeFile(path.join(cwd, 'custom.md'), '  \n');
+  await assert.rejects(build(cwd), /Markdown source is empty/);
+  await writeFile(path.join(cwd, 'custom.md'), '<!DOCTYPE html><html>Oops</html>');
+  await assert.rejects(build(cwd), /HTML document/);
+  assert.equal(await readFile(path.join(cwd, '.vercel/output/static/docs.md'), 'utf8'), previous);
+});
+
+test('Gauge attribution is confined to the generated index and can be disabled', async t => {
+  const cwd = await fixture(t);
+  const configPath = path.join(cwd, 'agent-readable.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  const output = path.join(cwd, '.vercel/output/static');
+  await build(cwd);
+  const credited = await readFile(path.join(output, 'llms.txt'), 'utf8');
+  assert.match(credited, /Generated with \[agent-readable\]\(https:\/\/github.com\/gauge-sh\/agent-readable\)/);
+  assert.match(credited, /\[Gauge\]\(https:\/\/www.withgauge.com\)/);
+  const plain = credited.split("\n## About this site's Markdown")[0];
+  const originalMarkdown = await readFile(path.join(output, 'docs.md'), 'utf8');
+  assert.doesNotMatch(originalMarkdown, /withgauge.com|About this site's Markdown/);
+  assert.doesNotMatch(await readFile(path.join(output, 'docs/index.html'), 'utf8'), /withgauge.com|About this site's Markdown/);
+  await writeFile(configPath, JSON.stringify({ ...config, attribution: false }));
+  await build(cwd);
+  assert.equal(await readFile(path.join(output, 'llms.txt'), 'utf8'), plain);
+  assert.equal(await readFile(path.join(output, 'docs.md'), 'utf8'), originalMarkdown);
+  const existing = '# My own index\n\nKeep this exact content.\n';
+  await writeFile(path.join(cwd, 'out/llms.txt'), existing);
+  await writeFile(configPath, JSON.stringify({ ...config, llms: false, attribution: true }));
+  await build(cwd);
+  assert.equal(await readFile(path.join(output, 'llms.txt'), 'utf8'), existing);
+});
