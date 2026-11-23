@@ -4,6 +4,20 @@
 
 Use Node.js 22 or newer. For a static site, install agent-readable as a development dependency and include development dependencies in the site build. For a Next.js or Node server that serves Markdown at request time, install it as a production dependency.
 
+## Install from npm
+
+For a static site deployed to Vercel, run this in your site directory.
+
+```sh
+npm install --save-dev agent-readable
+```
+
+For a Next.js or Node runtime integration, install the package alongside your server dependencies.
+
+```sh
+npm install agent-readable
+```
+
 ## Install from source
 
 From a checkout of `gauge-sh/agent-readable`:

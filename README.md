@@ -6,6 +6,7 @@
   <img alt="Gauge" src="docs/assets/gauge-logo-light.svg" width="800">
 </picture>
 
+[![npm version](https://img.shields.io/npm/v/agent-readable)](https://www.npmjs.com/package/agent-readable)
 [![CI](https://github.com/gauge-sh/agent-readable/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gauge-sh/agent-readable/actions/workflows/ci.yml)
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933)](https://github.com/gauge-sh/agent-readable/blob/main/package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/gauge-sh/agent-readable/blob/main/LICENSE)
@@ -37,9 +38,11 @@ Use Node.js 22 or newer. See the [installation guide](https://github.com/gauge-s
 
 ### Static site on Vercel
 
-After [installing the package](https://github.com/gauge-sh/agent-readable/blob/main/docs/installation.md) as a dev dependency, initialize config, build your site, and generate the Markdown output:
+Run these commands from your site directory. Replace `https://example.com` with your site URL and `out` with your HTML export directory.
 
 ```sh
+npm install --save-dev agent-readable
+
 # 1. Create agent-readable.json pointing at your static HTML export
 npx --no-install agent-readable init --site https://example.com --input out
 
