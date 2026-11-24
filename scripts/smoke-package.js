@@ -10,6 +10,9 @@ try {
   // A publish dry-run still needs a real temporary tarball and installation.
   const [packed] = JSON.parse(npm(['pack', '--dry-run=false', '--json', '--ignore-scripts', '--pack-destination', cwd]));
   assert.ok(packed.files.some(file => file.path === 'src/cli.js'));
+  for (const dts of ['src/index.d.ts', 'src/runtime.d.ts', 'src/node.d.ts', 'src/next.d.ts', 'src/next-server.d.ts', 'src/react.d.ts']) {
+    assert.ok(packed.files.some(file => file.path === dts), `Missing declaration file in tarball: ${dts}`);
+  }
   for (const file of packed.files) assert.match(file.path, /^(src\/|README\.md$|LICENSE$|package\.json$)/);
   await writeFile(path.join(cwd, 'package.json'), '{"private":true,"type":"module"}');
   npm(['install', '--dry-run=false', '--ignore-scripts', '--no-audit', '--no-fund', path.join(cwd, packed.filename)], { cwd });
@@ -35,8 +38,8 @@ try {
   run(['build']);
   assert.equal(await readFile(path.join(cwd, '.vercel/output/static/index.md'), 'utf8'), '# A custom agent workflow\n');
   execFileSync(process.execPath, ['--input-type=module', '-e', 'import { build, check, setupVercel } from "agent-readable"; if (![build,check,setupVercel].every(v => typeof v === "function")) process.exit(1);'], { cwd });
-  execFileSync(process.execPath, ['--input-type=module', '-e', 'import { createMarkdownHandler } from "agent-readable/runtime"; const handler = createMarkdownHandler({ resolve: ({ searchParams }) => "# " + searchParams.get("q") }); const response = await handler(new Request("https://example.com/index.md?q=runtime")); if (await response.text() !== "# runtime") process.exit(1);'], { cwd });
+  execFileSync(process.execPath, ['--input-type=module', '-e', 'import { createMarkdownHandler, applyMarkdownHeaders } from "agent-readable/runtime"; const handler = createMarkdownHandler({ resolve: ({ searchParams }) => "# " + searchParams.get("q") }); const response = await handler(new Request("https://example.com/index.md?q=runtime")); if (await response.text() !== "# runtime" || typeof applyMarkdownHeaders !== "function") process.exit(1);'], { cwd });
   execFileSync(process.execPath, ['--input-type=module', '-e', 'import { createNodeMarkdownHandler } from "agent-readable/node"; if (typeof createNodeMarkdownHandler !== "function") process.exit(1);'], { cwd });
-  execFileSync(process.execPath, ['--input-type=module', '-e', 'import { createNextMarkdownProxy, createNextMarkdownRoute } from "agent-readable/next"; import { createNextMarkdownServer } from "agent-readable/next/server"; if (![createNextMarkdownProxy, createNextMarkdownRoute, createNextMarkdownServer].every(value => typeof value === "function")) process.exit(1);'], { cwd });
+  execFileSync(process.execPath, ['--input-type=module', '-e', 'import { createNextMarkdownProxy, createNextMarkdownRoute, defineNextMarkdown, applyMarkdownHeaders } from "agent-readable/next"; import { createNextMarkdownServer } from "agent-readable/next/server"; if (![createNextMarkdownProxy, createNextMarkdownRoute, defineNextMarkdown, applyMarkdownHeaders, createNextMarkdownServer].every(value => typeof value === "function")) process.exit(1);'], { cwd });
   console.log('Packed install, CLI, exports, and artifact smoke checks passed.');
 } finally { await rm(cwd, { recursive: true, force: true }); }

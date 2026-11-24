@@ -95,9 +95,13 @@ createMarkdownHandler({
 | Option | Purpose |
 | --- | --- |
 | `resolve` | Required function returning a Markdown string or `null`/`undefined`; promises are supported |
-| `index` | Optional function with the same context, providing the index for `/llms.txt` and `/lm.txt` |
+| `index` | Optional function with the same context for `/llms.txt` and `/lm.txt`; pass `false` to delegate those paths to your app |
+| `match` | Optional `(pathname) => boolean` predicate restricting Markdown routing and HTML discovery headers to covered pages |
+| `cacheControl` | Optional `Cache-Control` header string or `(context) => string \| null` callback for `200` responses; defaults to `'no-store'` (`404` responses always use `'no-store'`) |
+| `notFound` | Optional `404` Markdown body string or `(context) => string` callback |
 | `attribution` | Defaults to `false`; `true` appends Gauge attribution to the supplied index only |
 | `exclude` | URL prefixes delegated to the app; defaults to `['/api', '/_next']`. Supplying a list replaces those defaults |
+| `userAgents` | Defaults to `false`; `true` matches Mintlify agent/AI-crawler patterns plus `curl/`, or pass an array of literal substring tokens |
 | `origin` | Required by the Node adapter only; the externally visible HTTP(S) origin |
 
 For `/pricing.md?plan=annual`, the resolver receives `pathname: '/pricing'` and
@@ -107,7 +111,8 @@ wrapping a framework handler does not automatically run that framework's auth
 middleware before the Markdown resolver.
 
 Strings are served verbatim. `null` or `undefined` produces a Markdown 404;
-omitting `index` makes index requests return 404. Resolver errors propagate to
+omitting `index` makes index requests return 404, while `index: false` delegates
+`/llms.txt` and `/lm.txt` to your application. Resolver errors propagate to
 your server's error handler. Other return types throw a `TypeError`.
 
 ## Request behavior
@@ -118,14 +123,15 @@ your server's error handler. Other return types throw a `TypeError`.
 | `/index.md` or `/.md` | Resolve `/` |
 | `/pricing` with explicit `text/markdown` or `text/x-markdown` | Resolve Markdown when its quality is at least HTML's quality |
 | `Accept: text/markdown;q=0` or wildcard-only Accept | Delegate to the app |
-| `/llms.txt` or `/lm.txt` | Use the optional `index` callback |
+| `/llms.txt` or `/lm.txt` | Use the optional `index` callback, or delegate to the app when `index: false` |
 | `HEAD` | Same status and headers as `GET`, with no body |
-| Other methods, excluded routes, ordinary assets | Delegate to the app |
+| Other methods, excluded routes, unmatched routes, ordinary assets | Delegate to the app |
 
 Markdown responses use `Content-Type: text/markdown`; index responses use
-`text/plain`. Both include `Cache-Control: no-store`, `Vary: Accept`, and
-`X-Content-Type-Options: nosniff`. Successful Markdown responses include a discovery
-`Link` retaining the query string. The package does not add application caching.
+`text/plain`. Both include `Cache-Control: no-store` by default (customizable for
+`200` responses via `cacheControl`), `Vary: Accept` (or `Accept, User-Agent` when
+`userAgents` is enabled), and `X-Content-Type-Options: nosniff`. Successful
+Markdown responses include a discovery `Link` retaining the query string.
 
 Quality ranking honors exact media types over wildcards and compares Markdown
 against HTML/XHTML. Equal quality favors explicit Markdown. These runtime rules
@@ -172,8 +178,8 @@ headers in an early middleware layer may be insufficient if the framework later
 overwrites them. Prefer the Node adapter when its hosting requirements fit.
 
 Additional exports are `prefersMarkdown(accept)`, `resolveMarkdownRequest(request,
-options)`, and `markdownDiscovery(url)` for custom adapters. They are building
-blocks, not automatic framework integrations.
+options)`, `markdownDiscovery(url)`, and `applyMarkdownHeaders(request, response,
+options)` for custom adapters. They are building blocks, not automatic framework integrations.
 
 ## Optional user-agent routing
 
@@ -185,13 +191,19 @@ Use an array such as `userAgents: ["MyAgent/"]` to replace these defaults with l
 substring tokens. `false` or an empty array disables automatic routing.
 
 For static builds, add `"userAgents": true` to `agent-readable.json`. For runtime
-handlers, pass `userAgents: true` in the handler options. With the Next.js proxy
-and route integration, pass the same option to **both** factories.
+handlers, pass `userAgents: true` in the handler options. With Next.js, configure
+it once via `defineNextMarkdown({ userAgents: true })`.
 
-Automatic routing applies only to GET/HEAD page requests; existing exclusions and
-asset handling still apply. Browsers without a matching token continue to receive
-HTML. Matching agents receive Markdown even with `Accept: text/html`, but an
-explicit Markdown `q=0` rejection disables this fallback. Direct `.md` URLs remain
-available. Responses that vary by this option use `Vary: Accept, User-Agent`;
-custom Web adapters must also merge User-Agent into their HTML response's Vary.
+Sample `User-Agent` strings that match `userAgents: true` in tests: `claude-code/2.0.0`,
+`Claude-User`, `Mozilla/5.0 (compatible; Claude-User/1.0; +https://claude.ai)`,
+`ClaudeBot/1.0`, `ChatGPT-User/1.0`, `OAI-SearchBot/1.0`, `Perplexity-User/1.0`,
+and `curl/8.7.1`. (Note that bare `Claude-User/1.0` without `compatible; ` does not match.)
+
+Automatic routing applies only to GET/HEAD page requests; existing exclusions,
+`match`, and asset handling still apply. Browsers without a matching token continue
+to receive HTML. Matching agents receive Markdown even with `Accept: text/html`,
+but an explicit Markdown `q=0` rejection disables this fallback. Direct `.md` URLs
+remain available. Responses that vary by this option use `Vary: Accept, User-Agent`;
+custom Web adapters must also merge User-Agent into their HTML response's Vary
+(or call `applyMarkdownHeaders(request, response, options)`).
 User-agent matching is a representation preference, not authentication.

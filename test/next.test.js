@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { createNextMarkdownProxy, createNextMarkdownRoute } from '../src/next.js';
+import { createNextMarkdownProxy, createNextMarkdownRoute, defineNextMarkdown, applyMarkdownHeaders } from '../src/next.js';
 import { createNextMarkdownServer } from '../src/next-server.js';
 
 // Capture the documented NextResponse boundary; full Next builds run in an external app.
@@ -101,4 +101,75 @@ test('Next server returns a generic 500 for resolver failures', async t => {
   const response = await fetch(`http://127.0.0.1:${server.address().port}/index.md`);
   assert.equal(response.status, 500);
   assert.equal(await response.text(), 'Internal server error');
+});
+
+test('defineNextMarkdown shares config across composable proxy rewrite, headers, and route', async () => {
+  const md = defineNextMarkdown({
+    match: pathname => pathname.startsWith('/posts/'),
+    userAgents: true,
+    index: false,
+  });
+  const route = md.route({
+    resolve: ({ pathname }) => pathname === '/posts/launch' ? '# Launch\n' : null,
+    cacheControl: 'public, s-maxage=3600, stale-while-revalidate=86400',
+    notFound: '# Post not found\n',
+  });
+
+  // Composed proxy simulation (e.g., inside Clerk middleware).
+  const composedProxy = req => {
+    const rewritten = md.rewrite(NextResponse, req);
+    if (rewritten) return rewritten;
+    const response = { status: 200, headers: new Headers({ 'x-app-header': 'kept', Vary: 'RSC' }) };
+    return md.applyHeaders(req, response);
+  };
+
+  // Uncovered home page: even curl/Claude Code passes through without rewrite or discovery headers.
+  const home = composedProxy(request('/', '*/*', 'GET', { 'User-Agent': 'curl/8.0' }));
+  assert.equal(home.url, undefined);
+  assert.equal(home.headers.get('x-app-header'), 'kept');
+  assert.equal(home.headers.get('vary'), 'RSC');
+  assert.equal(home.headers.get('link'), null);
+
+  // Existing /llms.txt is preserved when index: false.
+  const llms = composedProxy(request('/llms.txt', '*/*', 'GET', { 'User-Agent': 'curl/8.0' }));
+  assert.equal(llms.url, undefined);
+
+  // Covered HTML page keeps app headers and receives discovery Link + Vary.
+  const postHtml = composedProxy(request('/posts/launch', 'text/html', 'GET', { 'User-Agent': 'Mozilla/5.0' }));
+  assert.equal(postHtml.url, undefined);
+  assert.equal(postHtml.headers.get('x-app-header'), 'kept');
+  assert.equal(postHtml.headers.get('vary'), 'RSC, Accept, User-Agent');
+  assert.equal(postHtml.headers.get('link'), '</posts/launch.md>; rel="alternate"; type="text/markdown"');
+
+  // Covered Markdown request rewrites and resolves with shared userAgents, cacheControl, and notFound.
+  const agentReq = request('/posts/launch', 'text/html', 'GET', { 'User-Agent': 'claude-code/2.0' });
+  const rewritten = composedProxy(agentReq);
+  assert.equal(rewritten.url.pathname, '/api/markdown');
+  const mdRes = await route(new Request(rewritten.url, { headers: agentReq.headers }));
+  assert.equal(mdRes.status, 200);
+  assert.equal(await mdRes.text(), '# Launch\n');
+  assert.equal(mdRes.headers.get('cache-control'), 'public, s-maxage=3600, stale-while-revalidate=86400');
+  assert.equal(mdRes.headers.get('vary'), 'Accept, User-Agent');
+
+  // Covered missing post uses custom 404 body and no-store.
+  const missingReq = request('/posts/nope.md');
+  const missingRewrite = composedProxy(missingReq);
+  const missingRes = await route(new Request(missingRewrite.url, { headers: missingReq.headers }));
+  assert.equal(missingRes.status, 404);
+  assert.equal(await missingRes.text(), '# Post not found\n');
+  assert.equal(missingRes.headers.get('cache-control'), 'no-store');
+
+  // Standalone proxy helper also works directly.
+  const standalone = md.proxy(NextResponse);
+  assert.equal(standalone(request('/posts/launch.md')).url.pathname, '/api/markdown');
+  const standaloneHome = standalone(request('/', 'text/html'));
+  assert.equal(standaloneHome.headers.get('link'), '</app.js>; rel="preload"');
+  assert.equal(standaloneHome.headers.get('vary'), 'RSC');
+
+  // Config drift guards reject overriding routing options in route() or supplying index when index: false.
+  assert.throws(() => md.route({ resolve: () => '', userAgents: false }), /defineNextMarkdown/);
+  assert.throws(() => md.route({ resolve: () => '', match: () => true }), /defineNextMarkdown/);
+  assert.throws(() => md.route({ resolve: () => '', exclude: ['/api'] }), /defineNextMarkdown/);
+  assert.throws(() => md.route({ resolve: () => '', index: () => '# Index' }), /index: false/);
+  assert.equal(typeof applyMarkdownHeaders, 'function');
 });

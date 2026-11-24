@@ -21,7 +21,7 @@ curl -i -H 'Accept: text/markdown' https://agent-markdown-preview.vercel.app/doc
 
 Look for `content-type: text/markdown` in the response headers and `# Complete your first integration` in the body.
 
-Use Node.js 22 or newer. See the [installation guide](https://github.com/gauge-sh/agent-readable/blob/main/docs/installation.md) to add the package to your site.
+Available on [npm](https://www.npmjs.com/package/agent-readable) (`npm install -D agent-readable`). Requires Node.js 22 or newer — see the [installation guide](https://github.com/gauge-sh/agent-readable/blob/main/docs/installation.md) for static and runtime setups.
 
 ## How requests work
 
