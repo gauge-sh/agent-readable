@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 Fix Next.js 16 rewrite target handoff, add automatic HTML conversion and Netlify static builds, make `defineNextMarkdown` safer by default, and add composable `userAgents` matching and testing helpers.
 
