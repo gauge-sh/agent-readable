@@ -3,15 +3,17 @@ import { gaugeAttribution } from './attribution.js';
 import { readFile, writeFile, mkdir, readdir, cp, access, rename, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { load } from 'cheerio';
-import { convert, addDiscovery, markdownPath } from './content.js';
+import { convert, addDiscovery, stripAgentOnly, markdownPath } from './content.js';
 
 import { validateConfig, rejectSymlinks } from './config.js';
-import { validateVercel } from './vercel.js';
+import { validateVercel, compileVercelRoutes } from './vercel.js';
 
 const configName = 'agent-readable.json';
+const defaultExclusions = ['/404', '/500', '/_not-found', '/_next', '/preview', '/admin', '/api'];
 const exists = async p => { try { await access(p); return true; } catch { return false; } };
 const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const excluded = (route, prefixes) => prefixes.some(p => route === p || route.startsWith(`${p.replace(/\/$/, '')}/`));
+const trimSlashes = route => route.replace(/^\/+|\/+$/g, '');
 
 async function walk(dir, base = '') {
   const result = [];
@@ -33,7 +35,28 @@ export async function init(cwd, site, input = 'out') {
   return config;
 }
 
-export function routesFor(pages, htmlPages = pages, { userAgents = false } = {}) {
+function nonRootPagePattern(pages, htmlPages, exclude = []) {
+  const pageRoutes = new Set(pages.map(p => p.route));
+  const prefixRoutes = [...new Set([...defaultExclusions, ...exclude].map(p => p === '/' ? '/' : p.replace(/\/+$/, '')))];
+  const prefixes = [...new Set(prefixRoutes.map(trimSlashes).filter(Boolean))].sort();
+  const exactSkipped = [...new Set(
+    htmlPages
+      .map(p => p.route)
+      .filter(route => route !== '/' && !pageRoutes.has(route) && !excluded(route, prefixRoutes))
+      .map(trimSlashes)
+      .filter(Boolean),
+  )].sort();
+  const parts = [];
+  if (prefixes.length) parts.push(`(?:${prefixes.map(escapeRegex).join('|')})(?:/|$)`);
+  if (exactSkipped.length) parts.push(`(?:${exactSkipped.map(escapeRegex).join('|')})/?$`);
+  // Never negotiate paths whose final segment carries a file extension (e.g. .md, .txt, .js).
+  parts.push('(?:.*/)?[^/]*\\.[^/]+/?$');
+  const pattern = `^/(?!${parts.join('|')})(.+?)/?$`;
+  if (pattern.length > 4096) throw new Error('Too many excluded/noindex routes for a single Vercel route pattern.');
+  return pattern;
+}
+
+export function routesFor(pages, htmlPages = pages, { userAgents = false, exclude = [], trailingSlash = false, redirects = [], headers = [] } = {}) {
   // Vercel header conditions take regex source without flags. The pinned dataset
   // uses ASCII literals and case-neutral character classes. Preserve its escapes.
   // Each category fits in a separate Vercel header condition (4096 characters).
@@ -43,25 +66,50 @@ export function routesFor(pages, htmlPages = pages, { userAgents = false } = {})
     return `.*(?:${source}).*`;
   });
   const vary = patterns.length ? 'Accept, User-Agent' : 'Accept';
-  const routes = [];
-  for (const page of pages) {
-    const src = page.route === '/' ? '^/$' : `^${escapeRegex(page.route.replace(/\/$/, ''))}/?$`;
-    const link = `<${page.markdown}>; rel="alternate"; type="text/markdown"`;
-    routes.push({ src, headers: { Vary: vary, Link: link }, continue: true });
-    // Conservative explicit opt-in: reject q=0 even if another Markdown range is present.
-    const media = '[tT][eE][xX][tT]/[mM][aA][rR][kK][dD][oO][wW][nN]';
-    const value = `^(?!.*${media}[^,]*;\\s*[qQ]=0(?:\\.0*)?(?:\\s*[,;]|\\s*$))(?:[^,]*,)*\\s*${media}(?:\\s*;[^,]*)?(?:\\s*,.*)?\\s*$`;
-    routes.push({ src, methods: ['GET', 'HEAD'], has: [{ type: 'header', key: 'accept', value }], dest: page.markdown, headers: { 'Content-Type': 'text/markdown; charset=utf-8' } });
-    for (const pattern of patterns) routes.push({ src, methods: ['GET', 'HEAD'], has: [{ type: 'header', key: 'user-agent', value: pattern }], missing: [{ type: 'header', key: 'accept', value: `.*${markdownRejection}.*` }], dest: page.markdown, headers: { 'Content-Type': 'text/markdown; charset=utf-8' } });
-    routes.push({ src: `^${escapeRegex(page.markdown)}$`, headers: { 'Content-Type': 'text/markdown; charset=utf-8' }, continue: true });
+  // Conservative explicit opt-in: reject q=0 even if another Markdown range is present.
+  const media = '[tT][eE][xX][tT]/[mM][aA][rR][kK][dD][oO][wW][nN]';
+  const acceptValue = `^(?!.*${media}[^,]*;\\s*[qQ]=0(?:\\.0*)?(?:\\s*[,;]|\\s*$))(?:[^,]*,)*\\s*${media}(?:\\s*;[^,]*)?(?:\\s*,.*)?\\s*$`;
 
+  const routes = [...redirects, ...headers];
+  const pushNegotiation = (src, dest, link) => {
+    routes.push({ src, headers: { Vary: vary, Link: link }, continue: true });
+    routes.push({
+      src,
+      methods: ['GET', 'HEAD'],
+      has: [{ type: 'header', key: 'accept', value: acceptValue }],
+      dest,
+      headers: { 'Content-Type': 'text/markdown; charset=utf-8' },
+    });
+    for (const pattern of patterns) {
+      routes.push({
+        src,
+        methods: ['GET', 'HEAD'],
+        has: [{ type: 'header', key: 'user-agent', value: pattern }],
+        missing: [{ type: 'header', key: 'accept', value: `.*${markdownRejection}.*` }],
+        dest,
+        headers: { 'Content-Type': 'text/markdown; charset=utf-8' },
+      });
+    }
+  };
+
+  if (pages.some(p => p.route === '/')) {
+    pushNegotiation('^/$', '/index.md', '</index.md>; rel="alternate"; type="text/markdown"');
   }
-  for (const page of htmlPages) {
-    if (['/404', '/500', '/_not-found'].includes(page.route)) continue;
-    const src = page.route === '/' ? '^/$' : `^${escapeRegex(page.route.replace(/\/$/, ''))}/?$`;
-    routes.push({ src, dest: `/${page.file}` });
+  if (pages.some(p => p.route !== '/')) {
+    const src = nonRootPagePattern(pages, htmlPages, exclude);
+    pushNegotiation(src, '/$1.md', '</$1.md>; rel="alternate"; type="text/markdown"');
   }
-  routes.push({ handle: 'filesystem' }, { src: '/.*', status: 404, dest: '/404.html' });
+
+  routes.push({ src: '^/.*\\.md$', headers: { 'Content-Type': 'text/markdown; charset=utf-8' }, continue: true });
+  if (trailingSlash) {
+    routes.push({ src: '^/((?:.*/)?[^/.]+)$', status: 308, headers: { Location: '/$1/' } });
+  }
+  routes.push(
+    { handle: 'filesystem' },
+    { src: '^/((?:.*/)?[^/.]+)/?$', dest: '/$1/index.html', check: true },
+    { src: '^/((?:.*/)?[^/.]+)/?$', dest: '/$1.html', check: true },
+    { src: '/.*', status: 404, dest: '/404.html', headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+  );
   return routes;
 }
 
@@ -72,7 +120,12 @@ export async function build(cwd) {
   const output = path.join(cwd, '.vercel/output');
   await rejectSymlinks(cwd, input);
   await rejectSymlinks(cwd, output);
-  await validateVercel(cwd);
+  const vercel = await validateVercel(cwd);
+  if (config.trailingSlash !== undefined && vercel.trailingSlash !== undefined && config.trailingSlash !== vercel.trailingSlash) {
+    throw new Error('Conflicting trailingSlash settings in agent-readable.json and vercel.json.');
+  }
+  const trailingSlash = config.trailingSlash ?? vercel.trailingSlash ?? false;
+  const { redirects, headers } = compileVercelRoutes(vercel);
   if (await exists(output) && !await exists(path.join(output, '.agent-readable'))) throw new Error('Refusing to replace an existing .vercel/output not generated by agent-readable.');
   if (!await exists(input)) throw new Error(`Static HTML output not found: ${input}. Run your framework build first and set input in agent-readable.json to its export directory.`);
   const files = await walk(input);
@@ -80,17 +133,28 @@ export async function build(cwd) {
   const usedMarkdown = new Set();
   const htmlPages = [];
   const skipped = [];
-  const exclusions = ['/404', '/500', '/_not-found', '/_next', '/preview', '/admin', '/api', ...(config.exclude || [])];
+  const skippedHtml = [];
+  const exclusions = [...defaultExclusions, ...(config.exclude || [])];
   for (const file of files.filter(f => f.endsWith('.html'))) {
     if (/[?#%\\<>\s]/.test(file)) throw new Error(`HTML filename contains unsupported URL characters: ${file}`);
     const route = file === 'index.html' ? '/' : `/${file.replace(/(?:\/index)?\.html$/, '')}`;
+    const html = await readFile(path.join(input, file), 'utf8');
+    if (excluded(route, exclusions)) {
+      if (!skipped.includes(route)) skipped.push(route);
+      if (!htmlPages.some(p => p.route === route)) htmlPages.push({ route, file });
+      if (html.includes('data-agent-only')) skippedHtml.push({ file, html: stripAgentOnly(html) });
+      continue;
+    }
     if (htmlPages.some(p => p.route === route)) throw new Error(`Duplicate route: ${route}`);
     htmlPages.push({ route, file });
-    if (excluded(route, exclusions)) { skipped.push(route); continue; }
-    const html = await readFile(path.join(input, file), 'utf8');
     const $ = load(html);
-    if ($('meta[name="robots"],meta[name="googlebot"]').toArray().some(e => /\b(noindex|none)\b/i.test($(e).attr('content') || ''))) { skipped.push(route); continue; }
-    const canonical = new URL(file.endsWith('/index.html') ? `${route}/` : route, site).href;
+    if ($('meta[name="robots"],meta[name="googlebot"]').toArray().some(e => /\b(noindex|none)\b/i.test($(e).attr('content') || ''))) {
+      skipped.push(route);
+      if (html.includes('data-agent-only')) skippedHtml.push({ file, html: stripAgentOnly(html) });
+      continue;
+    }
+    const canonicalPath = route === '/' ? '/' : (trailingSlash || file.endsWith('/index.html')) ? `${route}/` : route;
+    const canonical = new URL(canonicalPath, site).href;
     const custom = markdown.get(route);
     const md = markdownPath(route);
     if (pages.some(p => p.markdown === md)) throw new Error(`Markdown URL collision: ${md}`);
@@ -127,13 +191,17 @@ export async function build(cwd) {
       await writeFile(target, page.body);
       await writeFile(path.join(stage, 'static', page.file), page.html);
     }
+    for (const page of skippedHtml) {
+      await writeFile(path.join(stage, 'static', page.file), page.html);
+    }
     if (config.llms !== false) {
       const index = `# ${site.hostname}\n\n## Pages\n\n${pages.map(p => `- [${p.title.replace(/[\[\]\r\n]/g, ' ')}](${new URL(p.markdown, site).href})`).join('\n')}\n`;
       const attribution = config.attribution === false ? '' : gaugeAttribution;
       await writeFile(path.join(stage, 'static/llms.txt'), index + attribution);
     }
     if (!files.includes('404.html')) await writeFile(path.join(stage, 'static/404.html'), '<!doctype html><title>Not found</title><h1>Not found</h1>');
-    await writeFile(path.join(stage, 'config.json'), `${JSON.stringify({ version: 3, routes: routesFor(pages, htmlPages, config) }, null, 2)}\n`);
+    const routes = routesFor(pages, htmlPages, { ...config, trailingSlash, redirects, headers });
+    await writeFile(path.join(stage, 'config.json'), `${JSON.stringify({ version: 3, routes }, null, 2)}\n`);
     const manifest = { version: 1, site: site.origin, pages: pages.map(({ body, html, ...p }) => ({ ...p, bytes: Buffer.byteLength(body) })), skipped };
     await writeFile(path.join(stage, '.agent-readable'), `${JSON.stringify(manifest, null, 2)}\n`);
     if (await exists(output)) await rm(output, { recursive: true });

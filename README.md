@@ -67,11 +67,12 @@ npx --no-install agent-readable check https://example.com \
 | Existing Node HTTP server | Wrap the request handler and resolve Markdown from files, a CMS, or a database. See the [Node adapter](https://github.com/gauge-sh/agent-readable/blob/main/docs/runtime.md#node-http-server). |
 | Framework with Web `Request` and `Response` | Call the [Web handler](https://github.com/gauge-sh/agent-readable/blob/main/docs/runtime.md#web-requestresponse-adapter) from your adapter and set discovery and cache headers on HTML responses. |
 
-## Custom Markdown overrides
+## Custom Markdown and inline controls
 
-For a pricing matrix or interactive product tour, write the Markdown you want an agent to read.
+For a pricing matrix or interactive product tour, control what agents read either inline in HTML or with a full per-page Markdown file:
 
-- **Static sites:** Map any page route to a local `.md` file in `agent-readable.json`. Unmapped pages still convert from HTML automatically:
+- **Inline HTML attributes:** Add `data-agent-hidden` to keep decorative UI out of Markdown, and `data-agent-only` (or `AgentOnly` from `agent-readable/react` in Next.js) to include agent-only copy in Markdown while stripping it from the shipped HTML.
+- **Static sites (per-page overrides):** Map any page route to a local `.md` file in `agent-readable.json`. Unmapped pages still convert from HTML automatically:
 
 ```json
 {

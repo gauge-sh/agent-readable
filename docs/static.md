@@ -79,10 +79,12 @@ with the package files and `agent-readable.json`, then deploy through your norma
 Vercel Git workflow. You can also deploy an already-built artifact with
 `vercel deploy --prebuilt`.
 
-The setup command preserves unrelated settings, but rejects existing routing,
-redirect, rewrite, header, function, and other conflicting build settings instead
-of attempting to combine them. A build running with `VERCEL=1` validates the
-required configuration too.
+The setup command preserves unrelated settings, along with `redirects`, `headers`,
+and `trailingSlash` in `vercel.json`, compiling them into `.vercel/output/config.json`
+during `agent-readable build` (with redirects evaluated ahead of Markdown negotiation).
+It still rejects incompatible `routes`, `rewrites`, `cleanUrls`, `builds`, and
+`functions` settings instead of attempting to merge them. A build running with
+`VERCEL=1` validates the required configuration too.
 
 ## 4. Verify the deployment
 
@@ -110,7 +112,8 @@ validation so misspelled options cannot silently change behavior.
   "exclude": [],
   "markdown": {},
   "llms": true,
-  "attribution": true
+  "attribution": true,
+  "trailingSlash": false
 }
 ```
 
@@ -124,12 +127,17 @@ validation so misspelled options cannot silently change behavior.
 | `markdown` | `{}` | Map existing page routes to [custom Markdown files](https://github.com/gauge-sh/agent-readable/blob/main/docs/custom-markdown.md) |
 | `llms` | `true` | Generate an `llms.txt` index; `false` preserves an existing exported file |
 | `attribution` | `true` | Add the Gauge attribution to the generated index |
+| `trailingSlash` | `false` | Emit 308 trailing-slash redirects for HTML URLs (or inherit from `vercel.json`) |
 
-Scripts, styles, navigation within the selected content, hidden elements, and
-`data-agent-readable="exclude"` elements are removed during conversion. Pages
-marked `noindex` or `none`, error pages, and built-in internal prefixes such as
-`/_next`, `/preview`, `/admin`, and `/api` are excluded from Markdown generation.
-Exported HTML and assets are still copied: these settings are not access control.
+Scripts, styles, navigation within the selected content, hidden elements,
+`data-agent-hidden`, and `data-agent-readable="exclude"` elements are removed during
+conversion. Elements marked `data-agent-only` (such as `<div data-agent-only hidden>`)
+are included in the generated Markdown and stripped from the shipped HTML; React /
+Next.js apps can import `AgentOnly` from `agent-readable/react` to avoid hydration
+mismatches. Pages marked `noindex` or `none`, error pages, and built-in internal
+prefixes such as `/_next`, `/preview`, `/admin`, and `/api` are excluded from
+Markdown generation. Exported HTML and assets are still copied: these settings are
+not access control.
 
 The input must stay inside the project and outside `.vercel`. Symlinked inputs,
 unsafe filenames, conflicting output files, and an unowned `.vercel/output`

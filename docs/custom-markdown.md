@@ -6,6 +6,29 @@ Use custom Markdown when agents need a separately written version of a page:
 product facts, a pricing explanation, API examples, or a concise description of an
 interactive experience. It can differ from the HTML; it does not have to be a clone.
 
+## Inline HTML controls: `data-agent-only` and `data-agent-hidden`
+
+When only specific regions of a page differ between browsers and agents, annotate
+elements directly in your HTML instead of maintaining a separate `.md` override file:
+
+- `data-agent-hidden` (or `data-agent-readable="exclude"`): stays in the shipped HTML,
+  omitted from generated `.md`. Ideal for interactive mockups, logo marquees, and
+  share sidebars.
+- `data-agent-only`: included in generated `.md`, stripped from the shipped HTML.
+  Ideal for agent-facing notes, links, or text alternatives to interactive widgets.
+
+```html
+<section data-agent-hidden>Interactive dashboard mockup</section>
+<div data-agent-only hidden>
+  <p>Run <code>npx my-cli init</code> to configure this integration.</p>
+</div>
+```
+
+For React / Next.js static exports, use `AgentOnly` from `agent-readable/react` so
+client hydration matches the stripped HTML without hydration warnings (never put
+secrets inside `AgentOnly`, since Next.js still serializes component props into its
+RSC script payload).
+
 ## Static sites: map a page to a file
 
 Create `agent-content/pricing.md` in your project:
