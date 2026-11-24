@@ -56,7 +56,7 @@ function nonRootPagePattern(pages, htmlPages, exclude = []) {
   return pattern;
 }
 
-export function routesFor(pages, htmlPages = pages, { userAgents = false, exclude = [], trailingSlash = false, redirects = [], headers = [] } = {}) {
+export function routesFor(pages, htmlPages = pages, { userAgents = false, exclude = [], trailingSlash = false, redirects = [], headers = [], llms = false, llmsFull = false } = {}) {
   // Vercel header conditions take regex source without flags. The pinned dataset
   // uses ASCII literals and case-neutral character classes. Preserve its escapes.
   // Each category fits in a separate Vercel header condition (4096 characters).
@@ -66,13 +66,14 @@ export function routesFor(pages, htmlPages = pages, { userAgents = false, exclud
     return `.*(?:${source}).*`;
   });
   const vary = patterns.length ? 'Accept, User-Agent' : 'Accept';
+  const describedBy = llms ? ', </llms.txt>; rel="describedby"; type="text/plain"' : '';
   // Conservative explicit opt-in: reject q=0 even if another Markdown range is present.
   const media = '[tT][eE][xX][tT]/[mM][aA][rR][kK][dD][oO][wW][nN]';
   const acceptValue = `^(?!.*${media}[^,]*;\\s*[qQ]=0(?:\\.0*)?(?:\\s*[,;]|\\s*$))(?:[^,]*,)*\\s*${media}(?:\\s*;[^,]*)?(?:\\s*,.*)?\\s*$`;
 
   const routes = [...redirects, ...headers];
   const pushNegotiation = (src, dest, link) => {
-    routes.push({ src, headers: { Vary: vary, Link: link }, continue: true });
+    routes.push({ src, headers: { Vary: vary, Link: `${link}${describedBy}` }, continue: true });
     routes.push({
       src,
       methods: ['GET', 'HEAD'],
@@ -101,6 +102,9 @@ export function routesFor(pages, htmlPages = pages, { userAgents = false, exclud
   }
 
   routes.push({ src: '^/.*\\.md$', headers: { 'Content-Type': 'text/markdown; charset=utf-8' }, continue: true });
+  if (llmsFull) {
+    routes.push({ src: '^/llms-full\\.txt$', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, continue: true });
+  }
   if (trailingSlash) {
     routes.push({ src: '^/((?:.*/)?[^/.]+)$', status: 308, headers: { Location: '/$1/' } });
   }
@@ -173,13 +177,14 @@ export async function build(cwd) {
       title = converted.title;
       body = converted.markdown;
     }
-    pages.push({ route, file, markdown: md, title, body, source: custom ? 'custom' : 'html', ...(custom ? { sourceFile: custom.file } : {}), html: addDiscovery(html, md) });
+    pages.push({ route, file, markdown: md, canonical, title, body, source: custom ? 'custom' : 'html', ...(custom ? { sourceFile: custom.file } : {}), html: addDiscovery(html, md) });
   }
   for (const route of markdown.keys()) {
     if (!usedMarkdown.has(route)) throw new Error(`Markdown override has no eligible HTML page: ${route}. Check the route, exclusions, and robots metadata.`);
   }
   if (!pages.length) throw new Error('No public HTML pages found. Build your static export first.');
   if (config.llms !== false && files.includes('llms.txt')) throw new Error('Existing llms.txt found. Set llms: false to preserve it.');
+  if (config.llmsFull === true && files.includes('llms-full.txt')) throw new Error('Existing llms-full.txt found. Set llmsFull: false to preserve it.');
   // Stage everything before replacing a previous build.
   const stage = path.join(cwd, `.vercel/agent-readable-stage-${process.pid}-${Date.now()}`);
   try {
@@ -194,15 +199,22 @@ export async function build(cwd) {
     for (const page of skippedHtml) {
       await writeFile(path.join(stage, 'static', page.file), page.html);
     }
+    const attribution = config.attribution === false ? '' : gaugeAttribution;
     if (config.llms !== false) {
       const index = `# ${site.hostname}\n\n## Pages\n\n${pages.map(p => `- [${p.title.replace(/[\[\]\r\n]/g, ' ')}](${new URL(p.markdown, site).href})`).join('\n')}\n`;
-      const attribution = config.attribution === false ? '' : gaugeAttribution;
       await writeFile(path.join(stage, 'static/llms.txt'), index + attribution);
     }
+    if (config.llmsFull === true) {
+      const fullHeader = `# ${site.hostname}\n\nFull Markdown content for ${site.origin}.`;
+      const sections = pages.map(p => `Source: ${p.canonical}\n\n${p.body.trim()}`);
+      await writeFile(path.join(stage, 'static/llms-full.txt'), `${[fullHeader, ...sections].join('\n\n---\n\n')}\n${attribution}`);
+    }
     if (!files.includes('404.html')) await writeFile(path.join(stage, 'static/404.html'), '<!doctype html><title>Not found</title><h1>Not found</h1>');
-    const routes = routesFor(pages, htmlPages, { ...config, trailingSlash, redirects, headers });
+    const hasLlms = config.llms !== false || files.includes('llms.txt');
+    const hasLlmsFull = config.llmsFull === true || files.includes('llms-full.txt');
+    const routes = routesFor(pages, htmlPages, { ...config, trailingSlash, redirects, headers, llms: hasLlms, llmsFull: hasLlmsFull });
     await writeFile(path.join(stage, 'config.json'), `${JSON.stringify({ version: 3, routes }, null, 2)}\n`);
-    const manifest = { version: 1, site: site.origin, pages: pages.map(({ body, html, ...p }) => ({ ...p, bytes: Buffer.byteLength(body) })), skipped };
+    const manifest = { version: 1, site: site.origin, pages: pages.map(({ body, html, canonical, ...p }) => ({ ...p, bytes: Buffer.byteLength(body) })), skipped };
     await writeFile(path.join(stage, '.agent-readable'), `${JSON.stringify(manifest, null, 2)}\n`);
     if (await exists(output)) await rm(output, { recursive: true });
     await rename(stage, output);

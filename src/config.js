@@ -4,7 +4,7 @@ import { lstat } from 'node:fs/promises';
 
 export function validateConfig(config, cwd) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('agent-readable.json must contain an object.');
-  const allowed = ['site', 'input', 'contentSelector', 'excludeSelectors', 'exclude', 'llms', 'markdown', 'attribution', 'userAgents', 'trailingSlash'];
+  const allowed = ['site', 'input', 'contentSelector', 'excludeSelectors', 'exclude', 'llms', 'llmsFull', 'markdown', 'attribution', 'userAgents', 'trailingSlash'];
   for (const key of Object.keys(config)) if (!allowed.includes(key)) throw new Error(`Unknown configuration option: ${key}`);
   userAgentMatchers(config.userAgents);
   if (config.trailingSlash !== undefined && typeof config.trailingSlash !== 'boolean') throw new Error('trailingSlash must be a boolean.');
@@ -21,6 +21,7 @@ export function validateConfig(config, cwd) {
   }
   if (config.exclude?.some(v => !v.startsWith('/') || v.startsWith('//') || /[?#]/.test(v))) throw new Error('exclude entries must be absolute URL paths without queries or fragments.');
   if (config.llms !== undefined && typeof config.llms !== 'boolean') throw new Error('llms must be a boolean.');
+  if (config.llmsFull !== undefined && typeof config.llmsFull !== 'boolean') throw new Error('llmsFull must be a boolean.');
   if (config.attribution !== undefined && typeof config.attribution !== 'boolean') throw new Error('attribution must be a boolean.');
   const markdown = new Map();
   if (config.markdown !== undefined) {

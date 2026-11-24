@@ -112,6 +112,7 @@ validation so misspelled options cannot silently change behavior.
   "exclude": [],
   "markdown": {},
   "llms": true,
+  "llmsFull": false,
   "attribution": true,
   "trailingSlash": false
 }
@@ -126,6 +127,7 @@ validation so misspelled options cannot silently change behavior.
 | `exclude` | `[]` | Exclude additional URL prefixes from Markdown generation |
 | `markdown` | `{}` | Map existing page routes to [custom Markdown files](https://github.com/gauge-sh/agent-readable/blob/main/docs/custom-markdown.md) |
 | `llms` | `true` | Generate an `llms.txt` index; `false` preserves an existing exported file |
+| `llmsFull` | `false` | Generate a combined `llms-full.txt` containing every eligible page's Markdown |
 | `attribution` | `true` | Add the Gauge attribution to the generated index |
 | `trailingSlash` | `false` | Emit 308 trailing-slash redirects for HTML URLs (or inherit from `vercel.json`) |
 

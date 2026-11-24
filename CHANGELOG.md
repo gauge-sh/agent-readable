@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+
+Make runtime and Next.js adapters easier to compose in production TypeScript apps, improve static HTML → Markdown conversion, and add local and protected-preview verification.
+
+- **Shared Next.js routing config & proxy composition.** Add `defineNextMarkdown()` in `agent-readable/next` to share `match`, `exclude`, `userAgents`, `index`, and `route` between `proxy.ts` and the route handler without pulling content resolvers into the proxy bundle. Expose `rewrite()` (returning `NextResponse.rewrite(...) | null`) and `applyHeaders()` / `applyMarkdownHeaders()` so apps with Clerk or custom auth proxies can compose cleanly.
+- **Route matching & index opt-out.** Add an optional `match(pathname)` predicate across runtime, Node, and Next.js adapters so uncovered pages stay HTML and never receive broken `Link` headers or negotiated 404s. Support `index: false` to leave existing `/llms.txt` and `/lm.txt` routes untouched.
+- **Response customization.** Support configurable `cacheControl` (string or callback, keeping `404` responses `no-store`) and custom `notFound` Markdown bodies in `createMarkdownHandler`, `createNodeMarkdownHandler`, `createNextMarkdownRoute`, and `defineNextMarkdown().route()`. Change the default `404` Markdown body to `# Page not found\n` (removing the hardcoded `/index.md` link).
+- **Full TypeScript declarations.** Ship `.d.ts` type definitions for `.`, `./runtime`, `./node`, `./next`, and `./next/server` (in addition to `./react`).
+- **Cleaner HTML → Markdown conversion.** Recover `aria-label` text on empty headings and accessible icon SVGs (such as animated headings and check/cross table marks), drop decorative `alt=""` images, flatten multi-line `<th>`/`<td>` cells into valid GFM pipe tables, and space adjacent link/button siblings.
+- **Built-in `llms-full.txt` and `describedby` discovery.** Add `"llmsFull": true` to generate `llms-full.txt` alongside static builds, and append `</llms.txt>; rel="describedby"; type="text/plain"` to HTTP `Link` headers whenever `llms.txt` is present.
+- **Local and protected-preview verification.** Add `checkLocal()` / `agent-readable check --local` to verify `.vercel/output` before deploying, plus `--header` / `headers` support on `check()` for SSO-protected preview deployments.
+
 ## 0.2.0
 
 Control HTML vs. Markdown inline with data attributes, preserve `vercel.json` redirects and headers in static builds, and scale static Vercel deployments past hundreds of pages.

@@ -546,3 +546,100 @@ test('pattern routes stay constant for large sites and support trailingSlash red
   await writeFile(path.join(cwd, 'vercel.json'), JSON.stringify({ trailingSlash: false }));
   await assert.rejects(build(cwd), /Conflicting trailingSlash/);
 });
+
+test('conversion recovers aria-label headings/icons, drops alt="" images, flattens table cells, and spaces adjacent links', () => {
+  const html = [
+    '<title>Pricing</title><main>',
+    '<h1 aria-label="Animated Pricing"><span aria-hidden="true">Animated</span> <span aria-hidden="true">Pricing</span></h1>',
+    '<img src="/dot.svg" alt=""><img src="/chart.png" alt="Chart">',
+    '<div><a href="/a">Start free</a><a href="/b">Book a demo</a><button>Talk to sales</button></div>',
+    '<table><thead><tr><th>Feature</th><th><div>Growth</div><div>$599</div><div>Per month</div></th></tr></thead>',
+    '<tbody><tr><td>Tracking</td><td><svg role="img" aria-label="Yes"><path d="M0 0"/></svg></td></tr>',
+    '<tr><td>Exports</td><td><svg aria-label="No"><path d="M0 0"/></svg></td></tr></tbody></table>',
+    '</main>',
+  ].join('');
+  const result = convert(html, 'https://example.com/pricing/');
+  assert.match(result.markdown, /# Animated Pricing/);
+  assert.doesNotMatch(result.markdown, /dot\.svg/);
+  assert.match(result.markdown, /!\[Chart\]\(https:\/\/example\.com\/chart\.png\)/);
+  assert.match(result.markdown, /\[Start free\]\(https:\/\/example\.com\/a\) \[Book a demo\]\(https:\/\/example\.com\/b\) Talk to sales/);
+  assert.match(result.markdown, /\| Feature \| Growth \$599 Per month \|/);
+  assert.match(result.markdown, /\| Tracking \| Yes \|/);
+  assert.match(result.markdown, /\| Exports \| No \|/);
+});
+
+test('llmsFull generates combined Markdown and Link headers advertise llms.txt describedby when present', async t => {
+  const cwd = await fixture(t);
+  const configPath = path.join(cwd, 'agent-readable.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  await writeFile(configPath, JSON.stringify({ ...config, llmsFull: true }));
+  await build(cwd);
+
+  const output = path.join(cwd, '.vercel/output');
+  const full = await readFile(path.join(output, 'static/llms-full.txt'), 'utf8');
+  assert.match(full, /# example\.com/);
+  assert.match(full, /Source: https:\/\/example\.com\//);
+  assert.match(full, /Source: https:\/\/example\.com\/docs\//);
+  assert.match(full, /npm install example-sdk/);
+  assert.doesNotMatch(full, /preview/i);
+
+  const site = await serveArtifact(t, cwd);
+  const html = await fetch(`${site}/docs/`, { headers: { Accept: 'text/html' } });
+  const link = html.headers.get('link') || '';
+  assert.match(link, /<\/docs\.md>; rel="alternate"; type="text\/markdown"/);
+  assert.match(link, /<\/llms\.txt>; rel="describedby"; type="text\/plain"/);
+  const fullRes = await fetch(`${site}/llms-full.txt`);
+  assert.equal(fullRes.status, 200);
+  assert.equal(fullRes.headers.get('content-type'), 'text/plain; charset=utf-8');
+
+  // Guard against overwriting an existing llms-full.txt.
+  await writeFile(path.join(cwd, 'out/llms-full.txt'), 'Custom full index\n');
+  await assert.rejects(build(cwd), /Existing llms-full\.txt/);
+
+  // Without llms.txt (llms: false and no exported llms.txt), Link omits describedby.
+  await rm(path.join(cwd, 'out/llms-full.txt'));
+  await writeFile(configPath, JSON.stringify({ ...config, llms: false, llmsFull: false }));
+  await build(cwd);
+  const siteNoLlms = await serveArtifact(t, cwd);
+  const noLlmsLink = (await fetch(`${siteNoLlms}/docs/`, { headers: { Accept: 'text/html' } })).headers.get('link') || '';
+  assert.doesNotMatch(noLlmsLink, /describedby/);
+});
+
+test('checkLocal and check --header verify local artifacts and protected origins', async t => {
+  const { checkLocal } = await import('../src/index.js');
+  const cwd = await fixture(t);
+  await build(cwd);
+
+  const localResult = await checkLocal(cwd);
+  assert.equal(localResult.ok, true, JSON.stringify(localResult));
+  assert.equal(localResult.pages.length, 2);
+
+  const cli = new URL('../src/cli.js', import.meta.url).pathname;
+  const cliOut = execFileSync(process.execPath, [cli, 'check', '--local', '--cwd', cwd, '--json'], { encoding: 'utf8' });
+  assert.equal(JSON.parse(cliOut).ok, true);
+
+  // Protected preview origin requiring a bypass header (simulating Vercel Deployment Protection).
+  const site = await serveArtifact(t, cwd);
+  const protectedServer = createServer(async (req, res) => {
+    if (req.headers['x-vercel-protection-bypass'] !== 'secret-token') {
+      res.writeHead(401, { 'Content-Type': 'text/plain' });
+      res.end('Unauthorized');
+      return;
+    }
+    const upstream = await fetch(`${site}${req.url}`, { headers: { Accept: req.headers.accept || '*/*' }, redirect: 'manual' });
+    res.writeHead(upstream.status, Object.fromEntries(upstream.headers.entries()));
+    res.end(await upstream.text());
+  });
+  protectedServer.listen(0, '127.0.0.1');
+  await once(protectedServer, 'listening');
+  t.after(() => { protectedServer.closeAllConnections(); protectedServer.close(); });
+  const protectedUrl = `http://127.0.0.1:${protectedServer.address().port}`;
+
+  assert.equal((await check(protectedUrl, ['/docs/'])).ok, false);
+  const passed = await check(protectedUrl, ['/docs/'], { headers: { 'x-vercel-protection-bypass': 'secret-token' } });
+  assert.equal(passed.ok, true, JSON.stringify(passed));
+  const { promisify } = await import('node:util');
+  const { execFile } = await import('node:child_process');
+  const { stdout: cliProtected } = await promisify(execFile)(process.execPath, [cli, 'check', protectedUrl, '--path', '/docs/', '--header', 'x-vercel-protection-bypass: secret-token', '--json']);
+  assert.equal(JSON.parse(cliProtected).ok, true);
+});

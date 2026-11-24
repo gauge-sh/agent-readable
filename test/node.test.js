@@ -47,3 +47,46 @@ test('Node adapter preserves downstream APIs and merges final framework headers'
   assert.equal((await fetch(base + '/style.css')).headers.get('content-type'), 'text/css');
   assert.equal((await fetch(base + '/docs', { method: 'POST' })).status, 200);
 });
+
+test('Node adapter respects match, index: false, cacheControl, and custom notFound', async t => {
+  const handle = createNodeMarkdownHandler({
+    origin: 'http://localhost',
+    match: pathname => pathname.startsWith('/posts/'),
+    userAgents: true,
+    index: false,
+    cacheControl: 'public, s-maxage=3600',
+    notFound: '# Not here\n',
+    resolve: ({ pathname }) => pathname === '/posts/a' ? '# Post A\n' : null,
+  }, (req, res) => {
+    res.writeHead(200, { 'Content-Type': req.url === '/llms.txt' ? 'text/plain' : 'text/html' });
+    res.end(req.url === '/llms.txt' ? '# Existing llms' : '<html>App</html>');
+  });
+  const server = createServer((req, res) => { handle(req, res).catch(() => { res.writeHead(500); res.end(); }); });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  // Uncovered home page serves HTML even for curl, with no Link/Vary added.
+  const home = await fetch(base + '/', { headers: { 'User-Agent': 'curl/8.0' } });
+  assert.equal(await home.text(), '<html>App</html>');
+  assert.equal(home.headers.get('link'), null);
+  assert.equal(home.headers.get('vary'), null);
+
+  // Existing /llms.txt is preserved.
+  assert.equal(await (await fetch(base + '/llms.txt')).text(), '# Existing llms');
+
+  // Covered HTML page gets Vary and Link.
+  const postHtml = await fetch(base + '/posts/a', { headers: { Accept: 'text/html' } });
+  assert.equal(postHtml.headers.get('vary'), 'Accept, User-Agent');
+  assert.match(postHtml.headers.get('link'), /\/posts\/a\.md/);
+
+  // Covered Markdown page gets custom Cache-Control; missing covered post gets custom 404 + no-store.
+  const postMd = await fetch(base + '/posts/a', { headers: { 'User-Agent': 'curl/8.0' } });
+  assert.equal(await postMd.text(), '# Post A\n');
+  assert.equal(postMd.headers.get('cache-control'), 'public, s-maxage=3600');
+  const missing = await fetch(base + '/posts/missing.md');
+  assert.equal(missing.status, 404);
+  assert.equal(await missing.text(), '# Not here\n');
+  assert.equal(missing.headers.get('cache-control'), 'no-store');
+});

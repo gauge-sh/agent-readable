@@ -8,6 +8,8 @@ export function createNodeMarkdownHandler({ origin, ...options }, next) {
   if (typeof next !== 'function') throw new TypeError('next must be a Node HTTP request handler.');
   const handle = createMarkdownHandler(options);
   const exclude = options.exclude ?? ['/api', '/_next'];
+  const match = options.match;
+  const auto = userAgentMatchers(options.userAgents).length > 0;
   return async function handler(req, res) {
     const url = new URL(req.url, base);
     if (url.origin !== base.origin) { res.writeHead(400); res.end(); return; }
@@ -33,7 +35,9 @@ export function createNodeMarkdownHandler({ origin, ...options }, next) {
       return;
     }
     const pathname = url.pathname.replace(/\/$/, '') || '/';
-    const page = !pathname.split('/').pop().includes('.') && !exclude.some(prefix => pathname === prefix || pathname.startsWith(`${prefix.replace(/\/$/, '')}/`));
+    const page = !pathname.split('/').pop().includes('.')
+      && !exclude.some(prefix => pathname === prefix || pathname.startsWith(`${prefix.replace(/\/$/, '')}/`))
+      && (!match || match(pathname));
     if (page) {
       // Frameworks may overwrite headers while rendering. Merge at the actual
       // HTTP commit point, including headers supplied directly to writeHead.
@@ -52,7 +56,7 @@ export function createNodeMarkdownHandler({ origin, ...options }, next) {
         }
         const vary = String(this.getHeader('Vary') || '').split(',').map(value => value.trim()).filter(Boolean);
         if (!vary.some(value => ['*', 'accept'].includes(value.toLowerCase()))) vary.push('Accept');
-        if (userAgentMatchers(options.userAgents).length && !vary.some(value => ['*', 'user-agent'].includes(value.toLowerCase()))) vary.push('User-Agent');
+        if (auto && !vary.some(value => ['*', 'user-agent'].includes(value.toLowerCase()))) vary.push('User-Agent');
         this.setHeader('Vary', vary.join(', '));
         if ((statusCode >= 200 && statusCode < 300) || statusCode === 304) {
           const link = markdownDiscovery(url);

@@ -7,11 +7,21 @@ build proves files were generated; this checks the responses a client receives.
 
 ## Static builds
 
-Use the manifest from the build you deployed to check every generated page:
+Verify the built `.vercel/output` artifact locally before deploying:
+
+```sh
+npx --no-install agent-readable check --local
+```
+
+After deployment, use its origin and the manifest from the matching build (pass `--header` if the preview uses Vercel Deployment Protection):
 
 ```sh
 npx --no-install agent-readable check https://example.com \
   --manifest .vercel/output/.agent-readable
+
+npx --no-install agent-readable check https://preview.vercel.app \
+  --manifest .vercel/output/.agent-readable \
+  --header "x-vercel-protection-bypass: $VERCEL_BYPASS_SECRET"
 ```
 
 The manifest identifies custom Markdown pages, so their headings are not required
