@@ -14,10 +14,10 @@ It does not extract HTML from SSR responses or load content automatically.
 | `agent-readable/node` | Control over a persistent Node HTTP server | Wrap your existing handler; the adapter adds final HTML discovery and `Vary` headers |
 | `agent-readable/runtime` | A server adapter using Web `Request` / `Response` | Call the handler, delegate other requests, and add discovery and `Vary` to final HTML responses |
 
-**Managed Vercel SSR/serverless is not a ready-made integration.** The tested Node
-path uses a custom HTTP server. A standard request API alone does not establish
-compatibility with a host's routing, middleware, or response lifecycle. Next.js
-standalone output also needs a separately supported integration.
+For Next.js App Router deployments (including Vercel/serverless), use `agent-readable/next`
+(`defineNextMarkdown` + Proxy + route handler). Use `agent-readable/node` when you run a
+persistent Node HTTP server, or `agent-readable/runtime` when integrating with another
+Web `Request`/`Response` host.
 
 Install the package as a **production dependency** using the
 [installation guide](https://github.com/gauge-sh/agent-readable/blob/main/docs/installation.md).

@@ -38,6 +38,7 @@ test('runtime preserves HEAD/404 behavior and leaves index attribution opt-in', 
     const response = await handle(request(path, 'text/markdown'));
     assert.equal(response.status, 404);
     assert.match(response.headers.get('content-type'), /^text\/markdown/);
+    assert.equal(await response.text(), '# Page not found\n');
   }
   for (const path of ['/index.md', '/missing.md', '/llms.txt']) {
     const response = await handle(request(path, '*/*', 'HEAD'));

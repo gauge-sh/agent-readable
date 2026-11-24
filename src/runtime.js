@@ -5,7 +5,7 @@ import { gaugeAttribution } from './attribution.js';
 // Import this subpath in server adapters to avoid the build-time filesystem stack.
 
 const defaultExclude = ['/api', '/_next'];
-const defaultNotFound = '# Page not found\n\n[Return to the directory](/index.md)\n';
+const defaultNotFound = '# Page not found\n';
 const normalizePathname = pathname => pathname.replace(/\/$/, '') || '/';
 const isExcluded = (pathname, exclude) => exclude.some(prefix => pathname === prefix || pathname.startsWith(`${prefix.replace(/\/$/, '')}/`));
 const hasFileExtension = pathname => pathname.split('/').pop().includes('.');

@@ -7,11 +7,12 @@ Markdown. The package owns content negotiation, Markdown routing, query
 preservation, index aliases, and HTTP response construction. Your app owns its
 content, access rules, and HTML metadata.
 
-**Choose the response path before deploying.** Proxy and route handlers work with
-Next.js routing, but Next.js 16.4.6 overwrites HTML `Vary: Accept` after Proxy runs.
-The custom-server helper fixes this at the final HTTP response step. Managed
-Vercel/serverless behavior is not validated; the helper needs a persistent Node
-server. This adapter does not turn an SSR app into a static export.
+**Choose the response path before deploying.** `defineNextMarkdown()` with `proxy.ts`
+and `app/api/markdown/route.ts` works with standard Next.js routing and serverless
+deployments. Next.js 16.4.6 overwrites HTML `Vary: Accept` after Proxy runs; if you
+deploy on a persistent Node server and need final-response `Vary` merging, use the
+optional custom-server helper (`agent-readable/next/server`). This adapter does not
+turn an SSR app into a static export.
 
 ## 1. Define shared routing config
 
@@ -184,7 +185,6 @@ async function serve(request: Request) {
 
 Run the [HTTP verifier](https://github.com/gauge-sh/agent-readable/blob/main/docs/verification.md)
 against the server you intend to deploy, plus your existing application tests.
-Do not infer managed-host support from a local custom-server result.
 
 The adapters and custom-server helper are exercised against a production Next.js
 16.4.6 app. The custom-server path must retain HTML `Vary: Accept`, RSC response headers,
