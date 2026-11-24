@@ -1,6 +1,6 @@
 {
   "name": "agent-readable",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Serve clean Markdown versions of your website to AI coding agents and search crawlers—statically or at runtime.",
   "type": "module",
   "license": "MIT",
