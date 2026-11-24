@@ -6,7 +6,7 @@ Use Node.js 22 or newer. For a static site, install agent-readable as a developm
 
 ## Install from npm
 
-For a static site deployed to Vercel, run this in your site directory.
+For a static site deployed to Vercel or Netlify, run this in your site directory.
 
 ```sh
 npm install --save-dev agent-readable

@@ -206,7 +206,8 @@ export async function setupVercel(cwd, buildCommand) {
   if (typeof buildCommand !== 'string' || !buildCommand.trim()) throw new Error('setup-vercel requires --build-command "<static site build command>".');
   if (/\bagent-readable\b/.test(buildCommand)) throw new Error('Provide only the site build command; setup-vercel appends agent-readable build.');
   // Require an initialized project before changing deployment configuration.
-  await readFile(path.join(cwd, 'agent-readable.json'), 'utf8');
+  const readable = JSON.parse(await readFile(path.join(cwd, 'agent-readable.json'), 'utf8'));
+  if (readable.target === 'netlify') throw new Error('This project targets Netlify. Set target to vercel in agent-readable.json before setup-vercel.');
   const previous = await readVercelConfig(cwd);
   const config = { ...previous, framework: null, buildCommand: `(${buildCommand.trim()}) && npx --no-install agent-readable build`, outputDirectory: null };
   await writeFile(path.join(cwd, 'vercel.json'), `${JSON.stringify(config, null, 2)}\n`);

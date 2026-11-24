@@ -1,4 +1,13 @@
-export type UserAgentsOption = boolean | readonly string[];
+export interface UserAgentsConfig {
+  /** Include the built-in Mintlify agent/crawler patterns and curl/. Defaults to true when using an object. */
+  defaults?: boolean;
+  /** Additional literal User-Agent substring tokens to match (case-insensitive). */
+  include?: readonly string[];
+  /** Literal User-Agent substring tokens to exclude from matching (case-insensitive). */
+  exclude?: readonly string[];
+}
+
+export type UserAgentsOption = boolean | readonly string[] | UserAgentsConfig;
 
 export type MarkdownMatch = (pathname: string) => boolean;
 

@@ -7,7 +7,7 @@ build proves files were generated; this checks the responses a client receives.
 
 ## Static builds
 
-Verify the built `.vercel/output` artifact locally before deploying:
+Verify the built artifact locally before deploying (`check --local --target netlify` for an explicit Netlify target):
 
 ```sh
 npx --no-install agent-readable check --local
@@ -45,9 +45,9 @@ Omit `--skip-heading-check` if matching HTML headings are part of your contract.
 
 For each page, checks cover HTML and alternate-format discovery, direct Markdown
 and negotiated Markdown status/content type, nonempty content that is not an HTML
-document, agreement between the two Markdown bodies, `Vary: Accept`, and rejection
+document, agreement between the two Markdown bodies, HTML cache safety (`Vary: Accept` or `Cache-Control: no-store`), Markdown `Vary: Accept`, and rejection
 of `text/markdown;q=0`. Unless skipped, it also compares the HTML's main heading
-with the Markdown.
+with the Markdown, ignoring differences in whitespace.
 
 Use `--json` for machine-readable results. Use `--cwd` to select a different
 project directory when resolving local files.

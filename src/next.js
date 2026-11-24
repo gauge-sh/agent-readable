@@ -2,12 +2,46 @@ import { userAgentMatchers } from './user-agents.js';
 import { applyMarkdownHeaders, createMarkdownHandler, resolveMarkdownRequest } from './runtime.js';
 
 const targetParam = '__agent_readable';
+const targetHeader = 'x-agent-readable-target';
 const defaultExclude = ['/api', '/_next'];
+const warnedDeprecations = new Set();
+
+function warnDeprecated(name) {
+  if (warnedDeprecations.has(name)) return;
+  warnedDeprecations.add(name);
+  if (typeof console?.warn === 'function') {
+    console.warn(`[agent-readable] ${name}() is deprecated and will be removed in a future release. Use defineNextMarkdown() instead.`);
+  }
+}
 
 function validateRoute(route) {
   if (typeof route !== 'string' || !/^\/(?!\/)[^?#\\\s]+$/.test(route) || new URL(route, 'https://example.com').pathname !== route) {
     throw new TypeError('route must be an absolute pathname without queries or fragments.');
   }
+}
+
+function buildNextMarkdownRoute(options) {
+  const handle = createMarkdownHandler(options);
+  return async function route(request) {
+    const url = new URL(request.url);
+    let target;
+    const encoded = request.headers.get(targetHeader) || url.searchParams.get(targetParam);
+    // Base64url prevents framework rewrites from decoding query separators early.
+    try {
+      if (encoded && /^[A-Za-z0-9_-]+$/.test(encoded)) target = JSON.parse(atob(encoded.replaceAll('-', '+').replaceAll('_', '/')));
+    } catch { /* Invalid internal target. */ }
+    if (!Array.isArray(target) || target.length !== 2) return new Response(null, { status: 404 });
+    const [pathname, search] = target;
+    if (typeof pathname !== 'string' || !/^\/(?!\/)[^?#\\\s]*$/.test(pathname)
+      || typeof search !== 'string' || (search !== '' && !search.startsWith('?')) || search.includes('#')) return new Response(null, { status: 404 });
+    url.pathname = pathname;
+    if (url.pathname !== pathname) return new Response(null, { status: 404 });
+    url.search = search;
+    const headers = new Headers(request.headers);
+    headers.delete(targetHeader);
+    return await handle(new Request(url, { method: request.method, headers, signal: request.signal }))
+      ?? new Response(null, { status: 404 });
+  };
 }
 
 /**
@@ -19,7 +53,7 @@ export function defineNextMarkdown({
   exclude = defaultExclude,
   userAgents = false,
   match,
-  index = true,
+  index = false,
 } = {}) {
   validateRoute(route);
   if (!Array.isArray(exclude)) throw new TypeError('exclude must be an array of pathname prefixes.');
@@ -41,12 +75,26 @@ export function defineNextMarkdown({
     url.pathname = route;
     url.search = '';
     url.searchParams.set(targetParam, encoded);
-    return NextResponse.rewrite(url);
+    // Next.js can expose the original URL to route handlers after a rewrite.
+    // Forward the same encoded target as a request header, replacing client input.
+    const headers = new Headers(request.headers);
+    headers.set(targetHeader, encoded);
+    return NextResponse.rewrite(url, { request: { headers } });
   }
 
   /** Apply Vary and alternate Markdown Link headers to an existing response for covered HTML pages. */
   function applyHeaders(request, response) {
-    return applyMarkdownHeaders(request, response, routing);
+    const result = applyMarkdownHeaders(request, response, routing);
+    // Next.js replaces Vary after middleware/proxy. A no-store response prevents
+    // caches from mixing representations even when that framework header wins.
+    const pathname = new URL(request.url).pathname.replace(/\/$/, '') || '/';
+    if (result?.headers && ['GET', 'HEAD'].includes(request.method)
+      && !pathname.split('/').pop().includes('.')
+      && !exclusions.some(prefix => pathname === prefix || pathname.startsWith(`${prefix.replace(/\/$/, '')}/`))
+      && (!match || match(pathname))) {
+      result.headers.set('Cache-Control', 'private, no-store');
+    }
+    return result;
   }
 
   /** Standalone Next.js proxy handler when no other middleware needs to compose with it. */
@@ -55,7 +103,14 @@ export function defineNextMarkdown({
       throw new TypeError('Pass NextResponse from next/server.');
     }
     return function nextMarkdownProxy(request) {
-      return rewrite(NextResponse, request) ?? applyHeaders(request, NextResponse.next());
+      const rewritten = rewrite(NextResponse, request);
+      if (rewritten) return rewritten;
+      if (request.headers.has(targetHeader)) {
+        const headers = new Headers(request.headers);
+        headers.delete(targetHeader);
+        return applyHeaders(request, NextResponse.next({ request: { headers } }));
+      }
+      return applyHeaders(request, NextResponse.next());
     };
   }
 
@@ -68,9 +123,12 @@ export function defineNextMarkdown({
       }
     }
     if (index === false && typeof options.index === 'function') {
-      throw new TypeError('Cannot supply an index callback when defineNextMarkdown disabled index routing (index: false).');
+      throw new TypeError('Cannot supply an index callback when defineNextMarkdown has index: false. Set index: true in defineNextMarkdown() to handle /llms.txt and /lm.txt.');
     }
-    return createNextMarkdownRoute({
+    if (index === true && typeof options.index !== 'function') {
+      throw new TypeError('defineNextMarkdown() has index: true, so route() requires an index callback.');
+    }
+    return buildNextMarkdownRoute({
       ...options,
       exclude: exclusions,
       userAgents,
@@ -88,32 +146,122 @@ export function defineNextMarkdown({
   };
 }
 
-/** NextResponse is supplied by the app so other frameworks do not install Next.js. */
-export function createNextMarkdownProxy(NextResponse, options = {}) {
-  return defineNextMarkdown(options).proxy(NextResponse);
+function extractForwardedRequestHeaders(originalHeaders, proxyHeaders) {
+  const overrideList = proxyHeaders?.get('x-middleware-override-headers');
+  if (overrideList !== null && overrideList !== undefined) {
+    const headers = new Headers();
+    for (const rawKey of overrideList.split(',')) {
+      const key = rawKey.trim();
+      if (!key) continue;
+      const value = proxyHeaders.get(`x-middleware-request-${key}`);
+      if (value !== null) headers.set(key, value);
+    }
+    return headers;
+  }
+  const headers = new Headers(originalHeaders);
+  if (proxyHeaders) {
+    for (const [key, value] of proxyHeaders.entries()) {
+      if (key.toLowerCase().startsWith('x-middleware-request-')) {
+        headers.set(key.slice('x-middleware-request-'.length), value);
+      }
+    }
+  }
+  return headers;
 }
 
-/** GET/HEAD route handler paired with createNextMarkdownProxy. */
-export function createNextMarkdownRoute(options) {
-  const handle = createMarkdownHandler(options);
-  return async function route(request) {
-    const url = new URL(request.url);
-    let target;
-    const encoded = url.searchParams.get(targetParam);
-    // Base64url prevents framework rewrites from decoding query separators early.
-    try {
-      if (encoded && /^[A-Za-z0-9_-]+$/.test(encoded)) target = JSON.parse(atob(encoded.replaceAll('-', '+').replaceAll('_', '/')));
-    } catch { /* Invalid internal target. */ }
-    if (!Array.isArray(target) || target.length !== 2) return new Response(null, { status: 404 });
-    const [pathname, search] = target;
-    if (typeof pathname !== 'string' || !/^\/(?!\/)[^?#\\\s]*$/.test(pathname)
-      || typeof search !== 'string' || (search !== '' && !search.startsWith('?')) || search.includes('#')) return new Response(null, { status: 404 });
-    url.pathname = pathname;
-    if (url.pathname !== pathname) return new Response(null, { status: 404 });
-    url.search = search;
-    return await handle(new Request(url, { method: request.method, headers: request.headers, signal: request.signal }))
-      ?? new Response(null, { status: 404 });
+function mergeProxyResponseHeaders(proxyHeaders, appResponse) {
+  const headers = new Headers(appResponse.headers);
+  for (const [key, value] of proxyHeaders.entries()) {
+    const lower = key.toLowerCase();
+    if (lower.startsWith('x-middleware-')) continue;
+    if (lower === 'vary') {
+      const existing = String(headers.get('vary') || '').split(',').map(v => v.trim()).filter(Boolean);
+      const incoming = value.split(',').map(v => v.trim()).filter(Boolean);
+      if (existing.includes('*') || incoming.includes('*')) headers.set('vary', '*');
+      else {
+        for (const token of incoming) {
+          if (!existing.some(entry => entry.toLowerCase() === token.toLowerCase())) existing.push(token);
+        }
+        headers.set('vary', existing.join(', '));
+      }
+    } else if (lower === 'link') {
+      const existing = headers.get('link');
+      if (!existing) headers.set('link', value);
+      else if (!existing.includes(value)) headers.set('link', `${existing}, ${value}`);
+    } else if (!headers.has(key)) {
+      headers.set(key, value);
+    }
+  }
+  return new Response(appResponse.body, {
+    status: appResponse.status,
+    statusText: appResponse.statusText,
+    headers,
+  });
+}
+
+/**
+ * Run a Next.js proxy and Markdown route handler together in tests without
+ * reading Next.js internal middleware headers directly.
+ */
+export function createNextMarkdownTester({ proxy, route, fallback, routePath } = {}) {
+  if (typeof proxy !== 'function') throw new TypeError('proxy must be a function.');
+  if (typeof route !== 'function') throw new TypeError('route must be a function.');
+  if (fallback !== undefined && typeof fallback !== 'function') throw new TypeError('fallback must be a function.');
+  if (routePath !== undefined) validateRoute(routePath);
+
+  return async function testNextMarkdown(input, init) {
+    const request = input instanceof Request ? input : new Request(input, init);
+    const proxyResponse = await proxy(request);
+    if (!proxyResponse) {
+      return fallback ? await fallback(request) : new Response(null, { status: 200 });
+    }
+    const proxyHeaders = proxyResponse.headers;
+    const forwardedHeaders = extractForwardedRequestHeaders(request.headers, proxyHeaders);
+    const rewrite = proxyHeaders?.get('x-middleware-rewrite');
+    if (rewrite) {
+      const destination = new URL(rewrite, request.url);
+      const isMarkdownRoute = routePath
+        ? destination.pathname === routePath
+        : (forwardedHeaders.has(targetHeader) || destination.searchParams.has(targetParam));
+      if (isMarkdownRoute) {
+        const routeRequest = new Request(request.url, {
+          method: request.method,
+          headers: forwardedHeaders,
+          signal: request.signal,
+        });
+        return await route(routeRequest);
+      }
+      return proxyResponse;
+    }
+    if (fallback && proxyHeaders?.get('x-middleware-next')) {
+      const appRequest = new Request(request.url, {
+        method: request.method,
+        headers: forwardedHeaders,
+        signal: request.signal,
+      });
+      const appResponse = await fallback(appRequest);
+      return mergeProxyResponseHeaders(proxyHeaders, appResponse);
+    }
+    return proxyResponse;
   };
+}
+
+/**
+ * NextResponse is supplied by the app so other frameworks do not install Next.js.
+ * @deprecated Use defineNextMarkdown().proxy(NextResponse) instead.
+ */
+export function createNextMarkdownProxy(NextResponse, options = {}) {
+  warnDeprecated('createNextMarkdownProxy');
+  return defineNextMarkdown({ ...options, index: options.index ?? true }).proxy(NextResponse);
+}
+
+/**
+ * GET/HEAD route handler paired with createNextMarkdownProxy.
+ * @deprecated Use defineNextMarkdown().route(options) instead.
+ */
+export function createNextMarkdownRoute(options) {
+  warnDeprecated('createNextMarkdownRoute');
+  return buildNextMarkdownRoute(options);
 }
 
 export { applyMarkdownHeaders };

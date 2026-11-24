@@ -11,6 +11,7 @@ export {
 export type * from './runtime.js';
 
 export interface AgentReadableConfig {
+  target?: 'vercel' | 'netlify';
   site: string;
   input: string;
   contentSelector?: string;
@@ -35,6 +36,7 @@ export interface BuildManifestPage {
 }
 
 export interface BuildManifest {
+  target?: 'vercel' | 'netlify';
   version: number;
   site: string;
   pages: BuildManifestPage[];
@@ -105,6 +107,7 @@ export interface CheckOptions {
 }
 
 export interface CheckLocalOptions {
+  target?: 'vercel' | 'netlify';
   paths?: readonly string[];
   skipHeadingCheck?: boolean;
   headers?: Record<string, string>;
@@ -134,7 +137,7 @@ export interface VercelConfig {
 
 export function init(cwd: string, site: string, input?: string): Promise<AgentReadableConfig>;
 
-export function build(cwd: string): Promise<BuildManifest>;
+export function build(cwd: string, options?: { target?: 'vercel' | 'netlify' }): Promise<BuildManifest>;
 
 export function routesFor(
   pages: readonly RoutePage[],
@@ -177,3 +180,5 @@ export function compileVercelRoutes(config?: VercelConfig): {
   redirects: VercelRoute[];
   headers: VercelRoute[];
 };
+
+export function setupNetlify(cwd: string, buildCommand: string): Promise<Record<string, unknown>>;

@@ -1,7 +1,7 @@
 {
   "name": "agent-readable",
   "version": "0.3.0",
-  "description": "Serve clean Markdown versions of your website to AI coding agents and search crawlers—statically or at runtime.",
+  "description": "Serve clean Markdown versions of your website to AI coding agents and search crawlers\u2014statically or at runtime.",
   "type": "module",
   "license": "MIT",
   "engines": {
@@ -34,6 +34,10 @@
     "./react": {
       "types": "./src/react.d.ts",
       "default": "./src/react.js"
+    },
+    "./html": {
+      "types": "./src/html.d.ts",
+      "default": "./src/html.js"
     }
   },
   "peerDependencies": {
@@ -47,7 +51,8 @@
   "files": [
     "src",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "docs/*.md"
   ],
   "scripts": {
     "test": "node --test",
@@ -56,11 +61,14 @@
     "test:package": "node scripts/smoke-package.js",
     "check": "npm run lint && npm test && npm run test:package",
     "prepublishOnly": "npm run check",
-    "smoke:agent": "node examples/agent-smoke/run.mjs"
+    "smoke:agent": "node examples/agent-smoke/run.mjs",
+    "test:next": "node scripts/next-production.js",
+    "test:netlify": "node scripts/netlify-production.js"
   },
   "dependencies": {
     "@mintlify/agent-traffic": "0.1.0",
     "cheerio": "1.1.2",
+    "smol-toml": "1.9.1",
     "turndown": "7.2.4",
     "turndown-plugin-gfm": "1.0.2"
   },
@@ -86,5 +94,28 @@
   "publishConfig": {
     "access": "public"
   },
-  "author": "Gauge"
+  "author": "Gauge",
+  "types": "./src/index.d.ts",
+  "typesVersions": {
+    "*": {
+      "runtime": [
+        "src/runtime.d.ts"
+      ],
+      "node": [
+        "src/node.d.ts"
+      ],
+      "next": [
+        "src/next.d.ts"
+      ],
+      "next/server": [
+        "src/next-server.d.ts"
+      ],
+      "react": [
+        "src/react.d.ts"
+      ],
+      "html": [
+        "src/html.d.ts"
+      ]
+    }
+  }
 }

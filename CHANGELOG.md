@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+Fix Next.js 16 rewrite target handoff, add automatic HTML conversion and Netlify static builds, make `defineNextMarkdown` safer by default, and add composable `userAgents` matching and testing helpers.
+
+- **Next.js 16 rewrite handoff fix & production E2E tests.** Pass the encoded rewrite target via an internal `x-agent-readable-target` request header alongside the `__agent_readable` query parameter so Next.js 16 route handlers receive the target even when Next.js retains the original `request.url`. Strip `x-agent-readable-target` on pass-through and before invoking resolvers. Add real `next build && next start` E2E verification (`scripts/next-production.js`) across Next.js 14 and Next.js 16.
+- **Safe `index: false` default in `defineNextMarkdown()`.** Default `index` to `false` so existing `/llms.txt` routes are never silently intercepted, and throw eagerly in `route()` if `index: true` lacks an `index` callback (or if `index: false` receives one).
+- **Composable `userAgents` configuration.** Support `{ defaults?, include?, exclude? }` across runtime, Next.js, static Vercel builds, and static Netlify builds—for example `{ exclude: ['curl/'] }` to keep Mintlify's agent/crawler patterns while returning HTML to plain `curl`.
+- **Supported Next.js test helper.** Export `createNextMarkdownTester({ proxy, route, fallback?, routePath? })` from `agent-readable/next` so consumer tests can run `proxy` + `route` end-to-end without reading Next.js's private `x-middleware-*` headers directly.
+- **Deprecate legacy Next.js factories.** Mark `createNextMarkdownProxy` and `createNextMarkdownRoute` as `@deprecated` with a one-time deprecation warning in favor of `defineNextMarkdown()`.
+- **Automatic runtime HTML conversion (`agent-readable/html`) & Netlify static target.** Add `createHtmlMarkdownResolver` for runtime HTML → Markdown conversion, `setup-netlify` / `--target netlify` static builds with generated Netlify Edge Functions, and `Cache-Control: private, no-store` on covered Next.js HTML pass-through responses to prevent cache mixing when Next.js replaces `Vary`.
+- **PR canary builds.** Add a `pkg.pr.new` GitHub Actions preview workflow so unreleased PRs can be installed directly for testing.
+
+- **Older template compatibility.** Bundle the pinned user-agent patterns as plain JavaScript so Next.js 14/Babel does not need a custom JSON-import loader; include upstream attribution. Add TypeScript `typesVersions` for legacy `moduleResolution: node` consumers.
+- **Packaged integration guides and verification.** Ship Markdown guides with npm, normalize heading whitespace in the checker, and add an official Netlify build/local edge-runtime check (`npm run test:netlify`). Next.js 14 cache correctness requires dynamic covered pages or the final-response custom server; the guide now explains the tradeoff.
+
+### Upgrading from 0.3
+
+1. **`defineNextMarkdown()` now defaults `index` to `false`.** If your app relies on `agent-readable` to serve `/llms.txt` or `/lm.txt`, set `index: true` in `defineNextMarkdown({ index: true })` and pass an `index` callback to `route({ resolve, index })`. If your app serves its own `/llms.txt`, you can remove `index: false`.
+2. **Migrate off `createNextMarkdownProxy` / `createNextMarkdownRoute`.** Replace separate proxy and route calls with a shared `defineNextMarkdown()` config (`markdown.proxy(NextResponse)` + `markdown.route({ resolve })`). The old factories still work in this release with a deprecation warning.
+3. **Optional `curl/` opt-out.** If you previously used `userAgents: true` and want plain `curl` requests to receive HTML, switch to `userAgents: { exclude: ['curl/'] }`.
+
 ## 0.3.0
 
 Make runtime and Next.js adapters easier to compose in production TypeScript apps, improve static HTML → Markdown conversion, and add local and protected-preview verification.

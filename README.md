@@ -1,4 +1,4 @@
-# agent-readable
+# Agent Readable (`agent-readable`)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/gauge-logo-dark.svg">
@@ -11,7 +11,7 @@
 [![Node.js 22+](https://img.shields.io/badge/Node.js-22%2B-339933)](https://github.com/gauge-sh/agent-readable/blob/main/package.json)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/gauge-sh/agent-readable/blob/main/LICENSE)
 
-**Serve Markdown alongside your existing web pages.** Generate it from a static HTML export for Vercel, or serve it from your application’s own content with a Next.js or Node adapter.
+**Serve Markdown alongside your existing web pages.** Generate it from a static HTML export for Vercel or Netlify, or convert your existing HTML at runtime with a Next.js or Node adapter.
 
 Try the live demo. Open [the documentation page](https://agent-markdown-preview.vercel.app/docs) in a browser, then request its Markdown representation.
 
@@ -58,12 +58,32 @@ npx --no-install agent-readable check https://example.com \
   --manifest .vercel/output/.agent-readable
 ```
 
+### Static site on Netlify
+
+Keep your existing host. After `init`, configure the static build and verify it:
+
+```sh
+npx --no-install agent-readable setup-netlify --build-command "npm run build"
+npm run build
+npx --no-install agent-readable build
+npx --no-install agent-readable check --local
+```
+
+This preserves Netlify configuration values, sets the publish directory, and generates
+an edge function for content negotiation. See the [Netlify guide](https://github.com/gauge-sh/agent-readable/blob/main/docs/netlify.md).
+
 ### Choose your integration
+
+**Already exporting static HTML? Keep that workflow and your existing host.** Use the
+static Vercel or Netlify adapter. You do not need to switch to SSR or configure a
+runtime origin just to add Markdown.
+
 
 | Your setup | How to serve Markdown |
 | --- | --- |
 | Static export on Vercel | Point the CLI at the HTML output from your site generator. The [static guide](https://github.com/gauge-sh/agent-readable/blob/main/docs/static.md) covers Next.js static exports and Eleventy, with example configurations for Astro and Hugo. |
-| Next.js App Router on a persistent Node server | Supply the Markdown for each route from your app. The [custom-server helper](https://github.com/gauge-sh/agent-readable/blob/main/docs/next.md) preserves discovery and cache headers on the final response. |
+| Static export on Netlify | Use `setup-netlify` and `build --target netlify`. Keep existing redirects and headers. |
+| Next.js App Router (Vercel, serverless, or self-hosted) | Use the [Next.js adapter](https://github.com/gauge-sh/agent-readable/blob/main/docs/next.md) with `defineNextMarkdown()` and either `createHtmlMarkdownResolver` from `agent-readable/html` (automatic HTML conversion) or your own CMS resolver. |
 | Existing Node HTTP server | Wrap the request handler and resolve Markdown from files, a CMS, or a database. See the [Node adapter](https://github.com/gauge-sh/agent-readable/blob/main/docs/runtime.md#node-http-server). |
 | Framework with Web `Request` and `Response` | Call the [Web handler](https://github.com/gauge-sh/agent-readable/blob/main/docs/runtime.md#web-requestresponse-adapter) from your adapter and set discovery and cache headers on HTML responses. |
 
@@ -71,7 +91,7 @@ npx --no-install agent-readable check https://example.com \
 
 For a pricing matrix or interactive product tour, control what agents read either inline in HTML or with a full per-page Markdown file:
 
-- **Inline HTML attributes:** Add `data-agent-hidden` to keep decorative UI out of Markdown, and `data-agent-only` (or `AgentOnly` from `agent-readable/react` in Next.js) to include agent-only copy in Markdown while stripping it from the shipped HTML.
+- **Inline HTML attributes:** Add `data-agent-hidden` to keep decorative UI out of Markdown, and `data-agent-only` (or `AgentOnly` from `agent-readable/react` in Next.js) to include agent-only copy in Markdown. Static builds strip it from shipped HTML; runtime HTML conversion does not modify your original HTML response.
 - **Static sites (per-page overrides):** Map any page route to a local `.md` file in `agent-readable.json`. Unmapped pages still convert from HTML automatically:
 
 ```json
@@ -85,7 +105,9 @@ For a pricing matrix or interactive product tour, control what agents read eithe
 }
 ```
 
-- **Runtime servers:** Return your chosen Markdown string directly from the `resolve` callback. Runtime handlers serve your returned text verbatim and do not convert SSR HTML automatically.
+- **Runtime servers:** Pass `createHtmlMarkdownResolver({ origin: 'https://your-trusted-site.example' })` from `agent-readable/html` as `resolve` to convert existing HTML, including inline controls. Or return Markdown from your CMS directly. The converter belongs in the Node route handler, not middleware.
+
+Conversion selects `main`, `article`, or `[role="main"]` by default. If your page lacks a landmark, add a semantic `<main>` or configure `contentSelector` for the real content container. Use `body` only deliberately, with `excludeSelectors` to remove navigation and decorative UI.
 
 See [custom Markdown](https://github.com/gauge-sh/agent-readable/blob/main/docs/custom-markdown.md) for route rules, examples, and verification behavior.
 
@@ -94,8 +116,9 @@ See [custom Markdown](https://github.com/gauge-sh/agent-readable/blob/main/docs/
 Many coding agents and AI crawlers fetch regular page URLs without appending `.md` or sending `Accept: text/markdown`. Setting `userAgents: true` enables automatic User-Agent negotiation so matching agents receive Markdown on normal URLs while browsers still receive HTML.
 
 - **Default matches (when enabled):** [Mintlify’s agent and AI-crawler patterns](https://github.com/mintlify/agent-traffic), plus `curl/` for shell fetches. Examples include Claude Code, ChatGPT-User, and OAI-SearchBot. Matching is case-insensitive.
-- **Custom matches:** Pass an array of literal substring tokens, e.g. `"userAgents": ["MyAgent/"]`.
-- **Disabled by default:** Enable `"userAgents": true` in `agent-readable.json` (static) or `userAgents: true` in handler options (runtime and Next.js proxy + route).
+- **Customize defaults:** Pass an object to keep defaults while adding or removing tokens, e.g. `"userAgents": { "exclude": ["curl/"] }` or `"userAgents": { "defaults": true, "include": ["MyAgent/"], "exclude": ["curl/"] }`.
+- **Replace defaults:** Pass an array of literal substring tokens, e.g. `"userAgents": ["MyAgent/"]`.
+- **Disabled by default:** Enable `"userAgents": true` (or an object/array) in `agent-readable.json` (static) or handler options (`defineNextMarkdown` / runtime).
 
 See [static configuration](https://github.com/gauge-sh/agent-readable/blob/main/docs/static.md#optional-user-agent-routing) and [runtime configuration](https://github.com/gauge-sh/agent-readable/blob/main/docs/runtime.md#optional-user-agent-routing) for `Vary` headers and edge cases.
 
@@ -119,16 +142,16 @@ The command handles setup checks, the local session, verification, and server cl
 
 | Capability | Static build | Runtime handlers |
 | --- | --- | --- |
-| Automatic HTML → Markdown conversion | Yes, from exported files | No; supply a `resolve` callback |
+| Automatic HTML → Markdown conversion | Yes, from exported files | Yes, with `createHtmlMarkdownResolver`; or supply your own `resolve` |
 | Custom per-page Markdown | Per-page file mapping in `agent-readable.json` | `resolve` returns your Markdown |
 | Query-dependent content | No | Yes; `resolve` receives `searchParams` |
 | `Accept: text/markdown` | Yes, with explicit opt-in and `q=0` rejection | Yes, with quality ranking against HTML |
-| `Accept: text/x-markdown` | No | Yes |
+| `Accept: text/x-markdown` | Netlify: yes; Vercel: no | Yes |
 | Optional User-Agent routing (`userAgents`) | Yes | Yes |
 | Root Markdown URL | `/index.md` | `/index.md` and `/.md` |
 | Site index URLs | `/llms.txt` | `/llms.txt` and `/lm.txt` |
 | Site index content | Auto-generated, or preserve your existing file | Optional `index` callback |
-| HTML discovery links & headers | Injected into copied HTML + Vercel routing rules | HTTP `Link`/`Vary` headers (Node adapter); add HTML `<link>` in your template |
+| HTML discovery links & headers | Injected into copied HTML + host routing | HTTP `Link`/`Vary` headers (Node adapter); add HTML `<link>` in your template |
 | Existing APIs and SSR | Not part of a static export | Delegated to your application |
 
 Use public HTML exports for static builds. Excluding a route skips its Markdown file and still deploys the original HTML. In a runtime resolver, apply the same authorization rules as the corresponding page.
@@ -151,7 +174,7 @@ npm run check
 npm run demo
 ```
 
-`npm run check` runs syntax checks, unit tests, and a packed-install smoke test. CI runs on Node.js 22, 24, and 26. See the [contributing guide](https://github.com/gauge-sh/agent-readable/blob/main/CONTRIBUTING.md) for changes. If a page serves the wrong format or loses content during conversion, [report a bug](https://github.com/gauge-sh/agent-readable/issues) with the URL path, request headers, and a small example.
+`npm run check` runs syntax checks, unit tests, and a packed-install smoke test. CI runs on Node.js 22, 24, and 26. `npm run test:next` builds production Next.js 14/16 fixtures. `npm run test:netlify` uses Netlify’s official build and local edge runtime. See the [contributing guide](https://github.com/gauge-sh/agent-readable/blob/main/CONTRIBUTING.md) for changes. If a page serves the wrong format or loses content during conversion, [report a bug](https://github.com/gauge-sh/agent-readable/issues) with the URL path, request headers, and a small example.
 
 ## Built by Gauge
 
