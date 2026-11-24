@@ -162,12 +162,10 @@ Routing by user agent is disabled by default. Set `userAgents: true` to serve
 Markdown automatically for Mintlify’s `agent` and `ai-crawler` user-agent patterns.
 The default also matches `curl/` because coding agents often fetch pages through the shell.
 Matching is case-insensitive and uses only the User-Agent header.
-Use an array such as `userAgents: ["MyAgent/"]` to replace these defaults with literal
-substring tokens. `false` or an empty array disables automatic routing.
+Pass an object such as `{ "defaults": true, "include": ["MyAgent/"], "exclude": ["curl/"] }` (or `{ "exclude": ["curl/"] }`) to customize the built-in list, or pass an array such as `["MyAgent/"]` to replace the defaults with literal substring tokens. `false` or an empty array disables automatic routing.
 
-For static builds, add `"userAgents": true` to `agent-readable.json`. For runtime
-handlers, pass `userAgents: true` in the handler options. With the Next.js proxy
-and route integration, pass the same option to **both** factories.
+For static builds, add `"userAgents": true` (or an object/array) to `agent-readable.json`. For runtime
+handlers, pass `userAgents` in the handler options. With Next.js, configure it once via `defineNextMarkdown()`.
 
 Automatic routing applies only to GET/HEAD page requests; existing exclusions and
 asset handling still apply. Browsers without a matching token continue to receive

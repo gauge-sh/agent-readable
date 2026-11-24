@@ -26,10 +26,59 @@ test('automatic routing is opt-in, literal, case-insensitive and honors rejectio
   assert.ok(await custom(req('agent.+/1')));
   assert.equal(await custom(req('AgentXYZ')), null);
   assert.equal(await custom(req('curl/8')), null);
-  for (const userAgents of ['curl', [null], [''], {}]) {
+  for (const userAgents of ['curl', [null], [''], null, { unknown: true }, { defaults: 'yes' }, { include: [''] }, { exclude: [null] }]) {
     assert.throws(() => validateConfig({ site: 'https://example.com', userAgents }, '/tmp/site'), /userAgents/);
     assert.throws(() => createMarkdownHandler({ resolve: () => '', userAgents }), /userAgents/);
   }
+});
+
+test('composable userAgents object supports defaults, include, and exclude across runtime and static routes', async () => {
+  const noCurl = createMarkdownHandler({ resolve: () => '# Docs', userAgents: { exclude: ['curl/'] } });
+  assert.equal(await noCurl(req('curl/8.7.1')), null);
+  assert.equal(await (await noCurl(req('claude-code/2.0'))).text(), '# Docs');
+  assert.equal(await (await noCurl(req('GPTBot/1.0'))).text(), '# Docs');
+  assert.equal((await noCurl(req('claude-code/2.0'))).headers.get('vary'), 'Accept, User-Agent');
+
+  const extended = createMarkdownHandler({
+    resolve: () => '# Docs',
+    userAgents: { defaults: true, include: ['MyAgent/'], exclude: ['curl/'] },
+  });
+  assert.equal(await extended(req('curl/8')), null);
+  assert.equal(await (await extended(req('MyAgent/1.0'))).text(), '# Docs');
+  assert.equal(await (await extended(req('OAI-SearchBot/1.0'))).text(), '# Docs');
+  assert.equal(await extended(req('Mozilla/5.0')), null);
+
+  const customOnly = createMarkdownHandler({
+    resolve: () => '# Docs',
+    userAgents: { defaults: false, include: ['MyAgent/'], exclude: ['MyAgent/Bad'] },
+  });
+  assert.equal(await (await customOnly(req('MyAgent/1.0'))).text(), '# Docs');
+  assert.equal(await customOnly(req('MyAgent/Bad')), null);
+  assert.equal(await customOnly(req('claude-code/2.0')), null);
+
+  const disabledObj = createMarkdownHandler({ resolve: () => '# Docs', userAgents: { defaults: false } });
+  assert.equal(await disabledObj(req('claude-code/2.0')), null);
+  assert.equal((await disabledObj(req('Mozilla/5.0', 'text/markdown'))).headers.get('vary'), 'Accept');
+
+  // Static Vercel routes compile exclude into missing user-agent header conditions.
+  const pages = [{ route: '/docs', markdown: '/docs.md', file: 'docs.html' }];
+  const routes = routesFor(pages, pages, { userAgents: { defaults: true, include: ['MyAgent/'], exclude: ['curl/'] } });
+  const autos = routes.filter(r => r.has?.some(h => h.key === 'user-agent'));
+  assert.equal(routes[0].headers.Vary, 'Accept, User-Agent');
+  const matchesStatic = ua => autos.some(r =>
+    new RegExp(r.has[0].value).test(ua)
+    && !r.missing.some(m => m.key === 'user-agent' && new RegExp(m.value).test(ua)),
+  );
+  assert.equal(matchesStatic('claude-code/2.0'), true);
+  assert.equal(matchesStatic('MyAgent/1.0'), true);
+  assert.equal(matchesStatic('curl/8.7.1'), false);
+  assert.equal(matchesStatic('CURL/8.7.1'), false);
+  assert.equal(matchesStatic('Mozilla/5.0'), false);
+
+  const disabledRoutes = routesFor(pages, pages, { userAgents: { defaults: false } });
+  assert.ok(!disabledRoutes.some(r => r.has?.some(h => h.key === 'user-agent')));
+  assert.equal(disabledRoutes[0].headers.Vary, 'Accept');
+  assert.ok(validateConfig({ site: 'https://example.com', userAgents: { defaults: true, include: ['MyAgent/'], exclude: ['curl/'] } }, '/tmp/site'));
 });
 
 test('static routes mirror opt-in routing without intercepting excluded HTML or rejected Markdown', () => {
@@ -79,5 +128,14 @@ test('runtime and static routing agree with the pinned Mintlify examples', async
       assert.equal(headers.some(header => header.test(value)), expected, value);
       assert.equal(Boolean(await handle(req(value))), expected, value);
     }
+  }
+});
+
+
+test('bundled middleware patterns match the pinned upstream dataset', async () => {
+  const { patterns: bundled } = await import('../src/agent-patterns.js');
+  for (const key of ['agent', 'ai-crawler']) {
+    assert.equal(bundled[key].source, patterns[key].source);
+    assert.equal(bundled[key].flags, patterns[key].flags);
   }
 });

@@ -1,12 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { createNextMarkdownProxy, createNextMarkdownRoute, defineNextMarkdown, applyMarkdownHeaders } from '../src/next.js';
+import { createNextMarkdownProxy, createNextMarkdownRoute, createNextMarkdownTester, defineNextMarkdown, applyMarkdownHeaders } from '../src/next.js';
 import { createNextMarkdownServer } from '../src/next-server.js';
 
 // Capture the documented NextResponse boundary; full Next builds run in an external app.
 const NextResponse = {
-  rewrite: url => ({ url }),
+  rewrite: (url, init) => ({ url, requestHeaders: init?.request?.headers }),
   next: () => ({ headers: new Headers({ Vary: 'RSC', Link: '</app.js>; rel="preload"' }) }),
 };
 const request = (path, accept = '*/*', method = 'GET', extra = {}) => new Request(`https://example.com${path}`, { method, headers: { Accept: accept, ...extra } });
@@ -172,4 +172,130 @@ test('defineNextMarkdown shares config across composable proxy rewrite, headers,
   assert.throws(() => md.route({ resolve: () => '', exclude: ['/api'] }), /defineNextMarkdown/);
   assert.throws(() => md.route({ resolve: () => '', index: () => '# Index' }), /index: false/);
   assert.equal(typeof applyMarkdownHeaders, 'function');
+});
+
+
+test('Next route uses forwarded target when framework retains original URL', async () => {
+  const original = request('/docs.md?q=one&q=two&__agent_readable=customer', '*/*', 'GET', {
+    Cookie: 'locale=en', 'x-agent-readable-target': 'spoofed',
+  });
+  const rewritten = proxy(original);
+  const response = await route(new Request(original.url, { headers: rewritten.requestHeaders }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(JSON.parse(await response.text()), {
+    pathname: '/docs', query: [['q', 'one'], ['q', 'two'], ['__agent_readable', 'customer']], cookie: 'locale=en',
+  });
+  const checkHeaders = createNextMarkdownRoute({ resolve: ({ request }) => String(request.headers.has('x-agent-readable-target')) });
+  assert.equal(await (await checkHeaders(new Request(original.url, { headers: rewritten.requestHeaders }))).text(), 'false');
+});
+
+test('defineNextMarkdown defaults index to false and enforces index callback parity', async () => {
+  const defaultMd = defineNextMarkdown();
+  assert.equal(defaultMd.options.index, false);
+  const defaultProxy = defaultMd.proxy(NextResponse);
+  // Existing /llms.txt and /lm.txt pass through by default without index: false boilerplate.
+  assert.equal(defaultProxy(request('/llms.txt')).url, undefined);
+  assert.equal(defaultProxy(request('/lm.txt')).url, undefined);
+  assert.throws(() => defaultMd.route({ resolve: () => '# Page', index: () => '# Index' }), /index: false/);
+
+  // Opting into index: true requires an index callback in route().
+  const withIndex = defineNextMarkdown({ index: true });
+  assert.equal(withIndex.options.index, true);
+  assert.throws(() => withIndex.route({ resolve: () => '# Page' }), /requires an index callback/);
+  const idxProxy = withIndex.proxy(NextResponse);
+  const idxRoute = withIndex.route({ resolve: () => '# Page', index: () => '# Custom Index\n' });
+  const req = request('/llms.txt');
+  const rewritten = idxProxy(req);
+  assert.equal(rewritten.url.pathname, '/api/markdown');
+  const res = await idxRoute(new Request(req.url, { headers: rewritten.requestHeaders }));
+  assert.equal(res.status, 200);
+  assert.equal(await res.text(), '# Custom Index\n');
+});
+
+test('createNextMarkdownTester runs proxy and route using Next.js middleware headers', async () => {
+  // Mirror NextResponse.rewrite / NextResponse.next header encoding from next/server.
+  const applyOverrideHeaders = (headers, init) => {
+    if (!init?.request?.headers) return;
+    const keys = [];
+    for (const [key, value] of init.request.headers.entries()) {
+      headers.set(`x-middleware-request-${key}`, value);
+      keys.push(key);
+    }
+    headers.set('x-middleware-override-headers', keys.join(','));
+  };
+  const RealLikeNextResponse = {
+    rewrite(destination, init) {
+      const headers = new Headers(init?.headers);
+      headers.set('x-middleware-rewrite', String(destination));
+      applyOverrideHeaders(headers, init);
+      return new Response(null, { status: 200, headers });
+    },
+    next(init) {
+      const headers = new Headers(init?.headers);
+      headers.set('x-middleware-next', '1');
+      applyOverrideHeaders(headers, init);
+      return new Response(null, { status: 200, headers });
+    },
+  };
+
+  const md = defineNextMarkdown({
+    match: pathname => pathname.startsWith('/docs'),
+    userAgents: { exclude: ['curl/'] },
+  });
+  const mdProxy = md.proxy(RealLikeNextResponse);
+  const mdRoute = md.route({
+    resolve: ({ pathname, searchParams, request }) => JSON.stringify({
+      pathname,
+      q: searchParams.getAll('q'),
+      cookie: request.headers.get('cookie'),
+      leakedTarget: request.headers.has('x-agent-readable-target'),
+    }),
+  });
+
+  let fallbackHeaders;
+  const run = createNextMarkdownTester({
+    proxy: mdProxy,
+    route: mdRoute,
+    fallback: req => {
+      fallbackHeaders = req.headers;
+      return new Response('<html>Docs</html>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html', Vary: 'RSC' },
+      });
+    },
+  });
+
+  // Markdown rewrite executes route with original URL + forwarded headers (matching Next.js 16).
+  const mdRes = await run('https://example.com/docs/intro?q=a&q=b', {
+    headers: { 'User-Agent': 'claude-code/2.0', Cookie: 's=1', 'x-agent-readable-target': 'spoof' },
+  });
+  assert.equal(mdRes.status, 200);
+  assert.match(mdRes.headers.get('content-type'), /text\/markdown/);
+  assert.deepEqual(JSON.parse(await mdRes.text()), {
+    pathname: '/docs/intro', q: ['a', 'b'], cookie: 's=1', leakedTarget: false,
+  });
+
+  // Excluded curl/ passes through to fallback with proxy response headers merged and spoofed target stripped.
+  const htmlRes = await run('https://example.com/docs/intro', {
+    headers: { 'User-Agent': 'curl/8.7.1', 'x-agent-readable-target': 'spoof' },
+  });
+  assert.equal(htmlRes.status, 200);
+  assert.equal(await htmlRes.text(), '<html>Docs</html>');
+  assert.equal(fallbackHeaders.has('x-agent-readable-target'), false);
+  assert.match(htmlRes.headers.get('link'), /\/docs\/intro\.md/);
+  assert.equal(htmlRes.headers.get('cache-control'), 'private, no-store');
+  assert.equal(htmlRes.headers.get('vary'), 'RSC, Accept, User-Agent');
+
+  // Non-markdown redirects from composed auth middleware pass straight through.
+  const authRun = createNextMarkdownTester({
+    proxy: req => {
+      const rewritten = md.rewrite(RealLikeNextResponse, req);
+      if (rewritten) return rewritten;
+      return new Response(null, { status: 307, headers: { Location: '/sign-in' } });
+    },
+    route: mdRoute,
+  });
+  const redirectRes = await authRun('https://example.com/private');
+  assert.equal(redirectRes.status, 307);
+  assert.equal(redirectRes.headers.get('location'), '/sign-in');
 });

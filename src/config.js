@@ -4,8 +4,9 @@ import { lstat } from 'node:fs/promises';
 
 export function validateConfig(config, cwd) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('agent-readable.json must contain an object.');
-  const allowed = ['site', 'input', 'contentSelector', 'excludeSelectors', 'exclude', 'llms', 'llmsFull', 'markdown', 'attribution', 'userAgents', 'trailingSlash'];
+  const allowed = ['target', 'site', 'input', 'contentSelector', 'excludeSelectors', 'exclude', 'llms', 'llmsFull', 'markdown', 'attribution', 'userAgents', 'trailingSlash'];
   for (const key of Object.keys(config)) if (!allowed.includes(key)) throw new Error(`Unknown configuration option: ${key}`);
+  if (config.target !== undefined && !['vercel', 'netlify'].includes(config.target)) throw new Error('target must be vercel or netlify.');
   userAgentMatchers(config.userAgents);
   if (config.trailingSlash !== undefined && typeof config.trailingSlash !== 'boolean') throw new Error('trailingSlash must be a boolean.');
   const site = new URL(config.site);
@@ -14,7 +15,7 @@ export function validateConfig(config, cwd) {
   if (typeof input !== 'string' || !input.trim()) throw new Error('input must be a nonempty project subdirectory.');
   const resolved = path.resolve(cwd, input);
   const relative = path.relative(cwd, resolved);
-  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || relative.split(path.sep)[0] === '.vercel') throw new Error('input must be a project subdirectory outside .vercel.');
+  if (!relative || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative) || ['.vercel', '.netlify'].includes(relative.split(path.sep)[0])) throw new Error('input must be a project subdirectory outside .vercel and .netlify.');
   if (config.contentSelector !== undefined && (typeof config.contentSelector !== 'string' || !config.contentSelector.trim())) throw new Error('contentSelector must be a nonempty CSS selector.');
   for (const key of ['exclude', 'excludeSelectors']) {
     if (config[key] !== undefined && (!Array.isArray(config[key]) || config[key].some(v => typeof v !== 'string' || !v.trim()))) throw new Error(`${key} must be an array of nonempty strings.`);
@@ -33,7 +34,7 @@ export function validateConfig(config, cwd) {
       if (typeof file !== 'string' || !file.trim() || path.isAbsolute(file) || !/\.md$/i.test(file)) throw new Error(`Markdown source for ${route} must be a project-relative .md file.`);
       const source = path.resolve(cwd, file);
       const relativeSource = path.relative(cwd, source);
-      if (relativeSource === '..' || relativeSource.startsWith(`..${path.sep}`) || path.isAbsolute(relativeSource) || relativeSource.split(path.sep)[0] === '.vercel') throw new Error(`Markdown source must stay inside the project and outside .vercel: ${file}`);
+      if (relativeSource === '..' || relativeSource.startsWith(`..${path.sep}`) || path.isAbsolute(relativeSource) || ['.vercel', '.netlify'].includes(relativeSource.split(path.sep)[0])) throw new Error(`Markdown source must stay inside the project and outside .vercel and .netlify: ${file}`);
       markdown.set(normalized, { path: source, file: relativeSource.split(path.sep).join('/') });
     }
   }

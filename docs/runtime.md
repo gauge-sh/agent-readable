@@ -101,7 +101,7 @@ createMarkdownHandler({
 | `notFound` | Optional `404` Markdown body string or `(context) => string` callback |
 | `attribution` | Defaults to `false`; `true` appends Gauge attribution to the supplied index only |
 | `exclude` | URL prefixes delegated to the app; defaults to `['/api', '/_next']`. Supplying a list replaces those defaults |
-| `userAgents` | Defaults to `false`; `true` matches Mintlify agent/AI-crawler patterns plus `curl/`, or pass an array of literal substring tokens |
+| `userAgents` | Defaults to `false`; `true` matches Mintlify agent/AI-crawler patterns plus `curl/`, an object `{ defaults?, include?, exclude? }` customizes the defaults, or an array of literal substring tokens replaces them |
 | `origin` | Required by the Node adapter only; the externally visible HTTP(S) origin |
 
 For `/pricing.md?plan=annual`, the resolver receives `pathname: '/pricing'` and
@@ -187,8 +187,10 @@ Routing by user agent is disabled by default. Set `userAgents: true` to serve
 Markdown automatically for Mintlify’s `agent` and `ai-crawler` user-agent patterns.
 The default also matches `curl/` because coding agents often fetch pages through the shell.
 Matching is case-insensitive and uses only the User-Agent header.
-Use an array such as `userAgents: ["MyAgent/"]` to replace these defaults with literal
-substring tokens. `false` or an empty array disables automatic routing.
+Use an object such as `{ defaults: true, include: ["MyAgent/"], exclude: ["curl/"] }`
+(or `{ exclude: ["curl/"] }`) to customize the defaults, or pass an array such as
+`userAgents: ["MyAgent/"]` to replace them with literal substring tokens. `false` or an
+empty array disables automatic routing.
 
 For static builds, add `"userAgents": true` to `agent-readable.json`. For runtime
 handlers, pass `userAgents: true` in the handler options. With Next.js, configure

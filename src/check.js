@@ -41,6 +41,7 @@ async function request(url, accept, extraHeaders = {}) {
 const markdownType = response => /^text\/markdown(?:\s*;|$)/i.test(response.headers.get('content-type') || '');
 const htmlType = response => /^text\/html(?:\s*;|$)/i.test(response.headers.get('content-type') || '');
 const varies = response => (response.headers.get('vary') || '').split(',').some(v => ['accept', '*'].includes(v.trim().toLowerCase()));
+const normalizeWhitespace = value => value.replace(/\s+/g, ' ').trim();
 const looksHtml = body => /^\s*(?:<!doctype\s+html|<html\b)/i.test(body);
 
 export async function checkPage(url, { skipHeadingCheck = false, headers } = {}) {
@@ -63,12 +64,12 @@ export async function checkPage(url, { skipHeadingCheck = false, headers } = {})
     add('Direct Markdown response', direct.response.ok && markdownType(direct.response) && direct.body.trim() && !looksHtml(direct.body));
     add('Negotiated Markdown response', negotiated.response.ok && markdownType(negotiated.response) && negotiated.body.trim() && !looksHtml(negotiated.body));
     add('Markdown responses match', direct.body.trim() === negotiated.body.trim());
-    add('HTML varies on Accept', varies(html.response));
+    add('HTML cache safety', varies(html.response) || /(?:^|,)\s*no-store\s*(?:,|$)/i.test(html.response.headers.get('cache-control') || ''), 'HTML must vary on Accept or disable storage with Cache-Control: no-store.');
     add('Markdown varies on Accept', varies(negotiated.response));
     add('q=0 keeps HTML', reject.response.ok && htmlType(reject.response));
     const h1 = $('main h1, article h1, [role="main"] h1').first();
     const heading = h1.text().trim() || h1.attr('aria-label')?.trim() || '';
-    if (heading && !skipHeadingCheck) add('Page heading retained', direct.body.includes(heading), 'A basic content check, not a full parity audit.');
+    if (heading && !skipHeadingCheck) add('Page heading retained', normalizeWhitespace(direct.body).includes(normalizeWhitespace(heading)), 'A basic content check, not a full parity audit.');
   } catch (error) { add('Request completed', false, error.message); }
   return { url, ok: checks.every(c => c.ok), checks };
 }
@@ -100,10 +101,25 @@ function contentTypeFor(file) {
  * Verify a built `.vercel/output` artifact locally by serving its `config.json`
  * routes on an ephemeral loopback port and running `check()` against it.
  */
-export async function checkLocal(cwd, { paths, skipHeadingCheck = false, headers } = {}) {
+export async function checkLocal(cwd, { target, paths, skipHeadingCheck = false, headers } = {}) {
+  if (!target) {
+    try { target = JSON.parse(await readFile(path.join(cwd, 'agent-readable.json'), 'utf8')).target; }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  if (target && !['vercel', 'netlify'].includes(target)) throw new Error('target must be vercel or netlify.');
+  if (target === 'netlify') {
+    const { checkNetlifyLocal } = await import('./check-netlify.js');
+    return checkNetlifyLocal(cwd, { paths, skipHeadingCheck, headers });
+  }
   const output = path.resolve(cwd, '.vercel/output');
   const staticDir = path.join(output, 'static');
-  const { routes } = JSON.parse(await readFile(path.join(output, 'config.json'), 'utf8'));
+  let artifact;
+  try { artifact = await readFile(path.join(output, 'config.json'), 'utf8'); }
+  catch (error) {
+    if (error.code === 'ENOENT') throw new Error('No Vercel static artifact found. Run agent-readable build first, or select --target netlify. For runtime Next.js, start the app and pass its running server URL: agent-readable check http://localhost:3000');
+    throw error;
+  }
+  const { routes } = JSON.parse(artifact);
   let manifest;
   try {
     manifest = JSON.parse(await readFile(path.join(output, '.agent-readable'), 'utf8'));
