@@ -102,7 +102,7 @@ createMarkdownHandler({
 | `attribution` | Defaults to `false`; `true` appends Gauge attribution to the supplied index only |
 | `exclude` | URL prefixes delegated to the app; defaults to `['/api', '/_next']`. Supplying a list replaces those defaults |
 | `userAgents` | Defaults to `false`; `true` matches Mintlify agent/AI-crawler patterns plus `curl/`, an object `{ defaults?, include?, exclude? }` customizes the defaults, or an array of literal substring tokens replaces them |
-| `origin` | Required by the Node adapter only; the externally visible HTTP(S) origin |
+| `origin` | Required by the Node adapter; optional in `createMarkdownHandler` / `defineNextMarkdown().route()` to emit absolute canonical `Link` URLs (otherwise root-relative paths are used) |
 
 For `/pricing.md?plan=annual`, the resolver receives `pathname: '/pricing'` and
 `searchParams.get('plan') === 'annual'`. The `request` includes incoming headers
@@ -131,7 +131,9 @@ Markdown responses use `Content-Type: text/markdown`; index responses use
 `text/plain`. Both include `Cache-Control: no-store` by default (customizable for
 `200` responses via `cacheControl`), `Vary: Accept` (or `Accept, User-Agent` when
 `userAgents` is enabled), and `X-Content-Type-Options: nosniff`. Successful
-Markdown responses include a discovery `Link` retaining the query string.
+Markdown responses include both a discovery `Link` (`rel="alternate"`) and a
+canonical `Link` (`rel="canonical"`) pointing to the HTML page URL, retaining
+the query string.
 
 Quality ranking honors exact media types over wildcards and compares Markdown
 against HTML/XHTML. Equal quality favors explicit Markdown. These runtime rules

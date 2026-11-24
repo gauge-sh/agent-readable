@@ -20,7 +20,7 @@ export async function validateNetlifyOutput(cwd) {
 
 export async function writeNetlifyEdge(cwd, pages, config, llms) {
   const { include, exclude } = parseUserAgents(config.userAgents);
-  const source = signature + `const prefersMarkdown = ${prefersMarkdown.toString()};\nconst createNetlifyHandler = ${createNetlifyHandler.toString()};\nexport default createNetlifyHandler(${JSON.stringify(pages.map(({ route, markdown }) => ({ route, markdown })))}, ${JSON.stringify(include.map(re => [re.source, re.flags]))}, ${JSON.stringify(exclude.map(re => [re.source, re.flags]))}, ${JSON.stringify(markdownRejection)}, prefersMarkdown, ${Boolean(llms)});\nexport const config = { path: "/*" };\n`;
+  const source = signature + `const prefersMarkdown = ${prefersMarkdown.toString()};\nconst createNetlifyHandler = ${createNetlifyHandler.toString()};\nexport default createNetlifyHandler(${JSON.stringify(pages.map(({ route, markdown, canonical }) => ({ route, markdown, canonical })))}, ${JSON.stringify(include.map(re => [re.source, re.flags]))}, ${JSON.stringify(exclude.map(re => [re.source, re.flags]))}, ${JSON.stringify(markdownRejection)}, prefersMarkdown, ${Boolean(llms)});\nexport const config = { path: "/*" };\n`;
   const file = path.join(cwd, edgePath);
   await mkdir(path.dirname(file), { recursive: true });
   await writeFile(file, source);

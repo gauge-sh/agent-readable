@@ -58,7 +58,7 @@ function nonRootPagePattern(pages, htmlPages, exclude = []) {
   return pattern;
 }
 
-export function routesFor(pages, htmlPages = pages, { userAgents = false, exclude = [], trailingSlash = false, redirects = [], headers = [], llms = false, llmsFull = false } = {}) {
+export function routesFor(pages, htmlPages = pages, { site, userAgents = false, exclude = [], trailingSlash = false, redirects = [], headers = [], llms = false, llmsFull = false } = {}) {
   // Vercel header conditions take regex source without flags. The pinned dataset
   // uses ASCII literals and case-neutral character classes. Preserve its escapes.
   // Each category fits in a separate Vercel header condition (4096 characters).
@@ -72,19 +72,21 @@ export function routesFor(pages, htmlPages = pages, { userAgents = false, exclud
   const excludedPatterns = excludeMatchers.map(toVercelPattern);
   const vary = patterns.length ? 'Accept, User-Agent' : 'Accept';
   const describedBy = llms ? ', </llms.txt>; rel="describedby"; type="text/plain"' : '';
+  const canonicalBase = site ? new URL(site).origin : '';
   // Conservative explicit opt-in: reject q=0 even if another Markdown range is present.
   const media = '[tT][eE][xX][tT]/[mM][aA][rR][kK][dD][oO][wW][nN]';
   const acceptValue = `^(?!.*${media}[^,]*;\\s*[qQ]=0(?:\\.0*)?(?:\\s*[,;]|\\s*$))(?:[^,]*,)*\\s*${media}(?:\\s*;[^,]*)?(?:\\s*,.*)?\\s*$`;
 
   const routes = [...redirects, ...headers];
-  const pushNegotiation = (src, dest, link) => {
+  const pushNegotiation = (src, dest, link, canonical) => {
+    const markdownLink = `${link}${describedBy}, <${canonical}>; rel="canonical"`;
     routes.push({ src, headers: { Vary: vary, Link: `${link}${describedBy}` }, continue: true });
     routes.push({
       src,
       methods: ['GET', 'HEAD'],
       has: [{ type: 'header', key: 'accept', value: acceptValue }],
       dest,
-      headers: { 'Content-Type': 'text/markdown; charset=utf-8' },
+      headers: { 'Content-Type': 'text/markdown; charset=utf-8', Link: markdownLink },
     });
     const missing = [
       { type: 'header', key: 'accept', value: `.*${markdownRejection}.*` },
@@ -97,20 +99,37 @@ export function routesFor(pages, htmlPages = pages, { userAgents = false, exclud
         has: [{ type: 'header', key: 'user-agent', value: pattern }],
         missing,
         dest,
-        headers: { 'Content-Type': 'text/markdown; charset=utf-8' },
+        headers: { 'Content-Type': 'text/markdown; charset=utf-8', Link: markdownLink },
       });
     }
   };
 
   if (pages.some(p => p.route === '/')) {
-    pushNegotiation('^/$', '/index.md', '</index.md>; rel="alternate"; type="text/markdown"');
+    pushNegotiation('^/$', '/index.md', '</index.md>; rel="alternate"; type="text/markdown"', `${canonicalBase}/`);
   }
   if (pages.some(p => p.route !== '/')) {
     const src = nonRootPagePattern(pages, htmlPages, exclude);
-    pushNegotiation(src, '/$1.md', '</$1.md>; rel="alternate"; type="text/markdown"');
+    pushNegotiation(src, '/$1.md', '</$1.md>; rel="alternate"; type="text/markdown"', `${canonicalBase}/$1${trailingSlash ? '/' : ''}`);
   }
 
-  routes.push({ src: '^/.*\\.md$', headers: { 'Content-Type': 'text/markdown; charset=utf-8' }, continue: true });
+  routes.push(
+    {
+      src: '^/index\\.md$',
+      headers: {
+        'Content-Type': 'text/markdown; charset=utf-8',
+        Link: `<${canonicalBase}/>; rel="canonical"`,
+      },
+      continue: true,
+    },
+    {
+      src: '^/(?!index\\.md$)(.+)\\.md$',
+      headers: {
+        'Content-Type': 'text/markdown; charset=utf-8',
+        Link: `<${canonicalBase}/$1${trailingSlash ? '/' : ''}>; rel="canonical"`,
+      },
+      continue: true,
+    },
+  );
   if (llmsFull) {
     routes.push({ src: '^/llms-full\\.txt$', headers: { 'Content-Type': 'text/plain; charset=utf-8' }, continue: true });
   }

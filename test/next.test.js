@@ -27,7 +27,7 @@ test('Next adapters preserve original paths, duplicate query keys, cookies and n
     const response = await through(request(`${path}?q=one&q=two&__page=customer&__agent_readable=customer`, 'text/markdown', 'GET', { Cookie: 'session=example' }));
     assert.equal(response.status, 200);
     assert.deepEqual(JSON.parse(await response.text()), { pathname: '/', query: [['q', 'one'], ['q', 'two'], ['__page', 'customer'], ['__agent_readable', 'customer']], cookie: 'session=example' });
-    assert.equal(response.headers.get('link'), '</index.md?q=one&q=two&__page=customer&__agent_readable=customer>; rel="alternate"; type="text/markdown"');
+    assert.equal(response.headers.get('link'), '</index.md?q=one&q=two&__page=customer&__agent_readable=customer>; rel="alternate"; type="text/markdown", </?q=one&q=two&__page=customer&__agent_readable=customer>; rel="canonical"');
   }
   assert.equal(JSON.parse(await (await through(request('/docs/', 'text/x-markdown'))).text()).pathname, '/docs');
 });

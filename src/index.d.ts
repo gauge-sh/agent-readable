@@ -68,6 +68,7 @@ export interface VercelRoute {
 }
 
 export interface RoutesForOptions {
+  site?: string;
   userAgents?: UserAgentsOption;
   exclude?: readonly string[];
   trailingSlash?: boolean;

@@ -6,7 +6,7 @@ export function createNodeMarkdownHandler({ origin, ...options }, next) {
   const base = new URL(origin);
   if (!['http:', 'https:'].includes(base.protocol) || base.username || base.password || base.pathname !== '/' || base.search || base.hash) throw new TypeError('origin must be an HTTP(S) origin.');
   if (typeof next !== 'function') throw new TypeError('next must be a Node HTTP request handler.');
-  const handle = createMarkdownHandler(options);
+  const handle = createMarkdownHandler({ ...options, origin: base.origin });
   const exclude = options.exclude ?? ['/api', '/_next'];
   const match = options.match;
   const auto = userAgentMatchers(options.userAgents).length > 0;

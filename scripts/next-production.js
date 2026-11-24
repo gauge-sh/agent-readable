@@ -62,6 +62,7 @@ try {
         assert.equal(response.status, 200, `${next} ${url}`);
         assert.match(response.headers.get('content-type'), /text\/markdown/);
         assert.match(response.headers.get('vary'), /Accept/i);
+        assert.match(response.headers.get('link'), /<\/\?q=one&q=two>; rel="canonical"/);
         const body = await response.text();
         assert.match(body, /Automatic source heading/); assert.match(body, /Agent instructions/); assert.doesNotMatch(body, /Decorative UI/);
         assert.match(body, /Query: one,two/); assert.match(body, /Cookie: session=test/);

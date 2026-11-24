@@ -21,6 +21,15 @@ function validateCacheControl(value) {
   return value;
 }
 
+function validateOrigin(origin) {
+  if (origin === undefined) return null;
+  const parsed = new URL(origin);
+  if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password || parsed.pathname !== '/' || parsed.search || parsed.hash) {
+    throw new TypeError('origin must be an HTTP(S) origin.');
+  }
+  return parsed.origin;
+}
+
 /** Explicit Markdown opt-in, with exact media types overriding wildcard ranges. */
 export function prefersMarkdown(accept = '') {
   const ranges = String(accept).toLowerCase().split(',').map(part => {
@@ -105,6 +114,7 @@ export function createMarkdownHandler({
   exclude,
   userAgents = false,
   match,
+  origin,
   cacheControl = 'no-store',
   notFound = defaultNotFound,
 } = {}) {
@@ -112,6 +122,7 @@ export function createMarkdownHandler({
   if (index !== undefined && index !== false && typeof index !== 'function') throw new TypeError('index must be a function or false.');
   if (typeof attribution !== 'boolean') throw new TypeError('attribution must be a boolean.');
   validateMatch(match);
+  const canonicalOrigin = validateOrigin(origin);
   if (typeof cacheControl !== 'function') validateCacheControl(cacheControl);
   if (typeof notFound !== 'string' && typeof notFound !== 'function') throw new TypeError('notFound must be a string or a function.');
   const vary = userAgentMatchers(userAgents).length ? 'Accept, User-Agent' : 'Accept';
@@ -145,7 +156,10 @@ export function createMarkdownHandler({
     if (!target.index && !missing) {
       const canonical = new URL(request.url);
       canonical.pathname = target.pathname;
-      headers.Link = markdownDiscovery(canonical);
+      const canonicalHref = canonicalOrigin
+        ? `${canonicalOrigin}${canonical.pathname}${canonical.search}`
+        : `${canonical.pathname}${canonical.search}`;
+      headers.Link = `${markdownDiscovery(canonical)}, <${canonicalHref}>; rel="canonical"`;
     }
     return new Response(request.method === 'HEAD' ? null : body, { status: missing ? 404 : 200, headers });
   };
