@@ -75,7 +75,10 @@ test('Netlify handler honors agents, explicit rejection, methods, HEAD and exist
   const response = await handler(request('/?q=1', { 'User-Agent': 'testagent' }), context);
   assert.match(response.headers.get('content-type'), /text\/markdown/);
   assert.match(response.headers.get('vary'), /User-Agent/);
+  assert.match(response.headers.get('link'), /<https:\/\/site\.example\/>; rel="canonical"/);
   assert.equal(calls[0][0], 'https://site.example/index.md?q=1');
+  const direct = await handler(request('/index.md'), { next: async () => new Response('# Content', { headers: { 'Content-Type': 'text/markdown' } }) });
+  assert.equal(direct.headers.get('link'), '<https://site.example/>; rel="canonical"');
   const rejected = await handler(request('/', { Accept: 'text/html, text/markdown;q=0', 'User-Agent': 'TestAgent' }), context);
   assert.match(rejected.headers.get('content-type'), /text\/html/);
   assert.match(rejected.headers.get('vary'), /Origin/);

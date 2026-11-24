@@ -42,7 +42,20 @@ const markdownType = response => /^text\/markdown(?:\s*;|$)/i.test(response.head
 const htmlType = response => /^text\/html(?:\s*;|$)/i.test(response.headers.get('content-type') || '');
 const varies = response => (response.headers.get('vary') || '').split(',').some(v => ['accept', '*'].includes(v.trim().toLowerCase()));
 const normalizeWhitespace = value => value.replace(/\s+/g, ' ').trim();
+const normalizeRoute = pathname => pathname.replace(/\/$/, '') || '/';
 const looksHtml = body => /^\s*(?:<!doctype\s+html|<html\b)/i.test(body);
+
+function canonicalLinkTarget(response, baseUrl) {
+  const header = response.headers.get('link') || '';
+  for (const part of header.split(',')) {
+    const match = /^\s*<([^>]+)>\s*;(.*)$/.exec(part);
+    if (!match) continue;
+    if (/(?:^|;)\s*rel\s*=\s*(?:"[^"]*\bcanonical\b[^"]*"|canonical\b)/i.test(match[2])) {
+      try { return new URL(match[1], baseUrl); } catch { return null; }
+    }
+  }
+  return null;
+}
 
 export async function checkPage(url, { skipHeadingCheck = false, headers } = {}) {
   const extraHeaders = normalizeHeaders(headers);
@@ -62,6 +75,12 @@ export async function checkPage(url, { skipHeadingCheck = false, headers } = {})
     const negotiated = await request(url, 'text/markdown', extraHeaders);
     const reject = await request(url, 'text/html, text/markdown;q=0', extraHeaders);
     add('Direct Markdown response', direct.response.ok && markdownType(direct.response) && direct.body.trim() && !looksHtml(direct.body));
+    const canonical = canonicalLinkTarget(direct.response, html.response.url);
+    add(
+      'Markdown canonical link',
+      canonical && !canonical.pathname.endsWith('.md') && normalizeRoute(canonical.pathname) === normalizeRoute(new URL(html.response.url).pathname),
+      'Direct Markdown responses must include a Link header with rel="canonical" pointing to the HTML page.',
+    );
     add('Negotiated Markdown response', negotiated.response.ok && markdownType(negotiated.response) && negotiated.body.trim() && !looksHtml(negotiated.body));
     add('Markdown responses match', direct.body.trim() === negotiated.body.trim());
     add('HTML cache safety', varies(html.response) || /(?:^|,)\s*no-store\s*(?:,|$)/i.test(html.response.headers.get('cache-control') || ''), 'HTML must vary on Accept or disable storage with Cache-Control: no-store.');

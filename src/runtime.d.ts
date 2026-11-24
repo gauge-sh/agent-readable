@@ -47,6 +47,8 @@ export interface MarkdownHandlerOptions extends MarkdownHeaderOptions {
   resolve: MarkdownResolver;
   index?: MarkdownResolver | false;
   attribution?: boolean;
+  /** Optional trusted HTTP(S) origin for absolute canonical Link headers on Markdown responses. */
+  origin?: string;
   cacheControl?: MarkdownCacheControl;
   notFound?: MarkdownNotFound;
 }

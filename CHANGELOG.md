@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+
+Send canonical `Link` headers on Markdown responses across runtime, Next.js, Vercel static, and Netlify static adapters so search engines consolidate indexing signals onto the HTML URL.
+
+- **Canonical `Link` header on Markdown responses.** Emit `<html-url>; rel="canonical"` in the HTTP `Link` header for `200` page Markdown responses across `agent-readable/runtime`, `agent-readable/next`, `agent-readable/node`, static Vercel builds (honoring `site` and `trailingSlash`), and static Netlify builds. Index responses (`/llms.txt`, `/lm.txt`) and `404`s omit `rel="canonical"`.
+- **Verifier check.** `agent-readable check` / `checkPage()` now verifies that direct `.md` responses include a `Link` header with `rel="canonical"` pointing to the corresponding HTML page.
+
 ## 0.4.0
 
 Fix Next.js 16 rewrite target handoff, add automatic HTML conversion and Netlify static builds, make `defineNextMarkdown` safer by default, and add composable `userAgents` matching and testing helpers.

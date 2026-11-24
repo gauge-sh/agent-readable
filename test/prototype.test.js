@@ -73,11 +73,15 @@ test('build stops on conflicting deployment config, native Markdown, and unowned
 });
 
 test('routing requires an explicit Markdown media range and respects q=0', () => {
-  const routes = routesFor([{ route: '/docs', file: 'docs/index.html', markdown: '/docs.md' }]);
+  const routes = routesFor([{ route: '/', file: 'index.html', markdown: '/index.md' }, { route: '/docs', file: 'docs/index.html', markdown: '/docs.md' }], undefined, { site: 'https://example.com', trailingSlash: true });
   const regex = new RegExp(routes.find(r => r.has).has[0].value);
   for (const accept of ['text/markdown', 'text/markdown;q=0.8', 'text/html, text/markdown', 'TEXT/MARKDOWN', 'text/markdown, */*']) assert.ok(regex.test(accept), accept);
   for (const accept of ['text/html', '*/*', 'text/markdown;q=0', 'text/markdown;q=0.000', 'text/markdown; charset=utf-8;q=0, text/html', 'application/text/markdown', 'text/markdown-extra']) assert.ok(!regex.test(accept), accept);
   assert.equal(routes[0].headers.Vary, 'Accept');
+  const rootMd = routes.find(r => r.src === '^/index\\.md$');
+  const pageMd = routes.find(r => r.src === '^/(?!index\\.md$)(.+)\\.md$');
+  assert.equal(rootMd.headers.Link, '<https://example.com/>; rel="canonical"');
+  assert.equal(pageMd.headers.Link, '<https://example.com/$1/>; rel="canonical"');
 });
 
 // A small local harness exercises the generated route definitions, not Vercel's CDN.

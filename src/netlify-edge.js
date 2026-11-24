@@ -1,7 +1,7 @@
 // This factory is embedded in the generated edge function; keep it self-contained.
 export function createNetlifyHandler(pages, patterns, excludedPatterns, rejection, prefersMarkdown, llms) {
-  const byRoute = new Map(pages.map(page => [page.route, page.markdown]));
-  const markdown = new Set(byRoute.values());
+  const byRoute = new Map(pages.map(page => [page.route, page]));
+  const byMarkdown = new Map(pages.map(page => [page.markdown, page]));
   const agents = patterns.map(([source, flags]) => new RegExp(source, flags));
   const excludedAgents = (excludedPatterns || []).map(([source, flags]) => new RegExp(source, flags));
   const rejects = new RegExp(rejection);
@@ -9,8 +9,10 @@ export function createNetlifyHandler(pages, patterns, excludedPatterns, rejectio
     if (!['GET', 'HEAD'].includes(request.method)) return;
     const url = new URL(request.url);
     const route = url.pathname.replace(/\/+$/, '') || '/';
-    const alternate = byRoute.get(route);
-    const direct = markdown.has(url.pathname);
+    const routePage = byRoute.get(route);
+    const directPage = byMarkdown.get(url.pathname);
+    const alternate = routePage?.markdown;
+    const direct = Boolean(directPage);
     if (!alternate && !direct) return;
     // Let Netlify apply existing redirects and headers first.
     let response = await context.next();
@@ -35,6 +37,11 @@ export function createNetlifyHandler(pages, patterns, excludedPatterns, rejectio
     if ((direct || negotiated) && response.ok) {
       headers.set('Content-Type', 'text/markdown; charset=utf-8');
       headers.set('X-Content-Type-Options', 'nosniff');
+      const page = directPage || routePage;
+      const canonical = page.canonical || new URL(page.route, url.origin).href;
+      const link = `<${canonical}>; rel="canonical"`;
+      const existing = headers.get('link');
+      if (!existing?.includes(link)) headers.set('Link', [existing, link].filter(Boolean).join(', '));
     } else if (!direct && !negotiated) {
       const link = `<${alternate}>; rel="alternate"; type="text/markdown"${llms ? ', </llms.txt>; rel="describedby"; type="text/plain"' : ''}`;
       headers.set('Link', [headers.get('link'), link].filter(Boolean).join(', '));

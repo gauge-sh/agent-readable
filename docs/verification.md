@@ -44,7 +44,7 @@ Omit `--skip-heading-check` if matching HTML headings are part of your contract.
 ## What the checker verifies
 
 For each page, checks cover HTML and alternate-format discovery, direct Markdown
-and negotiated Markdown status/content type, nonempty content that is not an HTML
+and negotiated Markdown status/content type, canonical `Link` (`rel="canonical"`) pointing back to the HTML page on direct Markdown responses, nonempty content that is not an HTML
 document, agreement between the two Markdown bodies, HTML cache safety (`Vary: Accept` or `Cache-Control: no-store`), Markdown `Vary: Accept`, and rejection
 of `text/markdown;q=0`. Unless skipped, it also compares the HTML's main heading
 with the Markdown, ignoring differences in whitespace.

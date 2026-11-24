@@ -25,10 +25,21 @@ test('runtime handles suffix aliases, async custom content, query filters and di
     assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.equal(response.headers.get('vary'), 'Accept');
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
-    assert.equal(response.headers.get('link'), '</index.md?q=surge>; rel="alternate"; type="text/markdown"');
+    assert.equal(response.headers.get('link'), '</index.md?q=surge>; rel="alternate"; type="text/markdown", </?q=surge>; rel="canonical"');
   }
-  for (const path of ['/docs.md', '/docs/']) assert.equal(await (await handle(request(path, 'text/x-markdown'))).text(), '# Entirely custom\n');
-  for (const path of ['/lm.txt', '/llms.txt']) assert.equal(await (await handle(request(path))).text(), '# Site index\n');
+  for (const path of ['/docs.md', '/docs/']) {
+    const res = await handle(request(path, 'text/x-markdown'));
+    assert.equal(await res.text(), '# Entirely custom\n');
+    assert.equal(res.headers.get('link'), '</docs.md>; rel="alternate"; type="text/markdown", </docs>; rel="canonical"');
+  }
+  const withOrigin = createMarkdownHandler({ origin: 'https://docs.example', resolve: () => '# Docs\n' });
+  assert.equal((await withOrigin(request('/docs.md'))).headers.get('link'), '</docs.md>; rel="alternate"; type="text/markdown", <https://docs.example/docs>; rel="canonical"');
+  assert.throws(() => createMarkdownHandler({ origin: 'https://docs.example/sub', resolve: () => '# Docs\n' }), /origin/);
+  for (const path of ['/lm.txt', '/llms.txt']) {
+    const res = await handle(request(path));
+    assert.equal(await res.text(), '# Site index\n');
+    assert.equal(res.headers.get('link'), null);
+  }
   assert.equal(markdownDiscovery('https://example.com/docs/?q=hello'), '</docs.md?q=hello>; rel="alternate"; type="text/markdown"');
 });
 
