@@ -9,11 +9,15 @@
 
 For deployment requirements and configuration examples, see the [static build guide](docs/static.md) and the [Next.js guide](docs/next.md).
 
-## Publish 0.1.0
+## Publishing a stable release
 
-1. Confirm green CI on Node 22, 24, and 26, and run `npm ci`, `npm run check`, `npm audit --omit=dev`, and `npm pack --dry-run` from the exact release commit.
-2. Deploy a live Vercel Git preview of a static site using `setup-vercel` with both generated and custom Markdown pages, and pass `agent-readable check <preview-origin> --manifest .vercel/output/.agent-readable`.
-   The demo project uses `examples/custom` as its Vercel root with access to source files outside that directory. It packs and installs this Git revision at build time. Enable Vercel system environment variables so the fixture can generate links for the deployment hostname. Check HTML then Markdown and Markdown then HTML on the same URL. Check the authored body against its source.
-3. Pack the release with `npm pack`. Install the resulting `agent-readable-0.1.0.tgz` in an empty project and run `npx --no-install agent-readable --help`.
-4. From the directory containing the tested archive, run `npm publish ./agent-readable-0.1.0.tgz --access public --dry-run`. Tag the verified commit `v0.1.0` and publish the same archive with `npm publish ./agent-readable-0.1.0.tgz --access public`.
-5. Install `agent-readable@0.1.0` from the public registry in a fresh project and verify the CLI. Add the registry install commands to the installation guide and the README, and add the npm version badge.
+Configure the GitHub Actions trusted publisher in the npm settings for `agent-readable`. Use owner `gauge-sh`, repository `agent-readable`, and workflow filename `publish.yml`. Leave the environment blank and allow `npm publish`. The publish job uses OIDC on a GitHub-hosted runner and attaches provenance.
+
+1. Set the release version in the manifest and lockfile, update the changelog, and confirm CI passes on the release commit.
+2. Verify a live Vercel preview with generated and custom Markdown pages using `agent-readable check <preview-origin> --manifest .vercel/output/.agent-readable`. Request HTML and Markdown in both orders at the same URL and compare custom Markdown with its source.
+3. Push the matching stable tag (for example, `v0.3.0`). The **Publish to npm** workflow checks the version, runs the test suite and packed-install smoke test, audits dependencies, and publishes the archive to the public registry.
+4. Verify the published version and provenance on npm and install that exact version in a fresh project to run `npx --no-install agent-readable --help`.
+
+### Existing v0.2.0 tag
+
+After merging the workflow and configuring the npm trusted publisher, run **Actions → Publish to npm → Run workflow** on `main`. The manual run verifies that the tagged commit is an ancestor and that only the publishing workflow and this checklist differ from the tag. Provenance identifies the workflow commit on `main`. Run this before merging additional changes.

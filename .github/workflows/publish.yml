@@ -1,0 +1,66 @@
+name: Publish to npm
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.ref_type == 'tag' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Verify stable version and release tag
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          tag="refs/tags/v$version"
+          git rev-parse --verify "$tag^{commit}"
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            [[ "$GITHUB_REF" == "$tag" ]]
+            [[ "$(git rev-parse HEAD)" == "$(git rev-parse "$tag^{commit}")" ]]
+          else
+            # Support a release tagged before the workflow was introduced.
+            git merge-base --is-ancestor "$tag^{commit}" HEAD
+            git diff --exit-code "$tag" HEAD -- . ':(exclude).github/workflows/publish.yml' ':(exclude)RELEASE.md'
+          fi
+      - run: npm ci --ignore-scripts
+      - run: npm run check
+      - run: npm audit --omit=dev --audit-level=high
+      - run: npm pack --ignore-scripts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: agent-readable-*.tgz
+          if-no-files-found: error
+
+  publish:
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.14.0
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-package
+      - run: npm publish ./agent-readable-*.tgz --access public --provenance --ignore-scripts
