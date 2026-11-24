@@ -31,6 +31,7 @@ export async function checkPage(url, { skipHeadingCheck = false } = {}) {
     const html = await request(url, 'text/html');
     add('HTML response', html.response.ok && htmlType(html.response));
     const $ = load(html.body);
+    add('No leaked agent-only elements', !$('[data-agent-only]').length);
     const alternate = $('link[rel="alternate"][type="text/markdown"]').attr('href');
     add('HTML discovery link', alternate);
     add('HTTP discovery link', /rel="?alternate"?/.test(html.response.headers.get('link') || '') && /text\/markdown/.test(html.response.headers.get('link') || ''));

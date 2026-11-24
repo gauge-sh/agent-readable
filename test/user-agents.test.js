@@ -45,6 +45,8 @@ test('static routes mirror opt-in routing without intercepting excluded HTML or 
   assert.match('text/html, text/markdown;q=0, */*', new RegExp(auto.missing[0].value));
   assert.doesNotMatch('text/markdown;q=0.5', new RegExp(auto.missing[0].value));
   assert.ok(!routes.some(r => r.dest === '/excluded.md'));
+  assert.ok(autos.every(r => !new RegExp(r.src).test('/excluded') && !new RegExp(r.src).test('/excluded/')));
+  assert.ok(autos.some(r => new RegExp(r.src).test('/docs') && new RegExp(r.src).test('/docs/')));
   const custom = routesFor(pages, pages, { userAgents: ['Agent.+'] }).find(r => r.has?.some(h => h.key === 'user-agent'));
   assert.match('agent.+/1', new RegExp(custom.has[0].value));
   assert.doesNotMatch('AgentXYZ', new RegExp(custom.has[0].value));

@@ -4,9 +4,10 @@ import { lstat } from 'node:fs/promises';
 
 export function validateConfig(config, cwd) {
   if (!config || typeof config !== 'object' || Array.isArray(config)) throw new Error('agent-readable.json must contain an object.');
-  const allowed = ['site', 'input', 'contentSelector', 'excludeSelectors', 'exclude', 'llms', 'markdown', 'attribution', 'userAgents'];
+  const allowed = ['site', 'input', 'contentSelector', 'excludeSelectors', 'exclude', 'llms', 'markdown', 'attribution', 'userAgents', 'trailingSlash'];
   for (const key of Object.keys(config)) if (!allowed.includes(key)) throw new Error(`Unknown configuration option: ${key}`);
   userAgentMatchers(config.userAgents);
+  if (config.trailingSlash !== undefined && typeof config.trailingSlash !== 'boolean') throw new Error('trailingSlash must be a boolean.');
   const site = new URL(config.site);
   if (!['http:', 'https:'].includes(site.protocol) || site.pathname !== '/' || site.search || site.hash || site.username || site.password) throw new Error('site must be an HTTP(S) origin.');
   const input = config.input ?? 'out';

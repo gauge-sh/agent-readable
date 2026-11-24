@@ -15,7 +15,19 @@
     "./runtime": "./src/runtime.js",
     "./node": "./src/node.js",
     "./next": "./src/next.js",
-    "./next/server": "./src/next-server.js"
+    "./next/server": "./src/next-server.js",
+    "./react": {
+      "types": "./src/react.d.ts",
+      "default": "./src/react.js"
+    }
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    }
   },
   "files": [
     "src",

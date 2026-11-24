@@ -19,9 +19,15 @@ try {
   run(['init', '--site', 'https://example.com', '--input', 'dist']);
   run(['setup-vercel', '--build-command', 'npm run build:site']);
   await mkdir(path.join(cwd, 'dist'));
-  await writeFile(path.join(cwd, 'dist/index.html'), '<main><h1>Installed package</h1></main>');
+  await writeFile(path.join(cwd, 'dist/index.html'), '<main><h1>Installed package</h1><div data-agent-hidden>Skip UI</div><div data-agent-only hidden><p>Agent context</p></div></main>');
   assert.match(run(['build']), /Generated 1 Markdown pages/);
-  assert.match(await readFile(path.join(cwd, '.vercel/output/static/index.md'), 'utf8'), /# Installed package/);
+  const builtMd = await readFile(path.join(cwd, '.vercel/output/static/index.md'), 'utf8');
+  assert.match(builtMd, /# Installed package/);
+  assert.match(builtMd, /Agent context/);
+  assert.doesNotMatch(builtMd, /Skip UI/);
+  const builtHtml = await readFile(path.join(cwd, '.vercel/output/static/index.html'), 'utf8');
+  assert.match(builtHtml, /Skip UI/);
+  assert.doesNotMatch(builtHtml, /Agent context|data-agent-only/);
   const configPath = path.join(cwd, 'agent-readable.json');
   const config = JSON.parse(await readFile(configPath, 'utf8'));
   await writeFile(path.join(cwd, 'custom.md'), '# A custom agent workflow\n');

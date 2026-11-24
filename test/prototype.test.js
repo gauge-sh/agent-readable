@@ -48,14 +48,21 @@ test('build produces Markdown, discovery, precise routes and preserves original 
   assert.doesNotMatch(llms, /preview|hidden/);
   const config = JSON.parse(await readFile(path.join(output, 'config.json'), 'utf8'));
   assert.equal(config.version, 3);
-  assert.ok(config.routes.some(r => r.dest === '/preview/index.html'));
-  assert.ok(!config.routes.some(r => r.dest === '/preview.md'));
+  const negotiated = config.routes.filter(r => r.dest && r.has);
+  assert.ok(negotiated.every(r => !new RegExp(r.src).test('/preview') && !new RegExp(r.src).test('/hidden')));
+  const site = await serveArtifact(t, cwd);
+  const preview = await fetch(`${site}/preview`, { headers: { Accept: 'text/markdown' } });
+  assert.equal(preview.status, 200);
+  assert.match(preview.headers.get('content-type') || '', /text\/html/);
+  const hidden = await fetch(`${site}/hidden`, { headers: { Accept: 'text/markdown' } });
+  assert.equal(hidden.status, 200);
+  assert.match(hidden.headers.get('content-type') || '', /text\/html/);
   await build(cwd); // A second build replaces only our own artifact.
 });
 
 test('build stops on conflicting deployment config, native Markdown, and unowned output', async t => {
   const cwd = await fixture(t);
-  await writeFile(path.join(cwd, 'vercel.json'), '{"redirects":[]}');
+  await writeFile(path.join(cwd, 'vercel.json'), '{"rewrites":[]}');
   await assert.rejects(build(cwd), /Existing vercel.json/);
   await rm(path.join(cwd, 'vercel.json'));
   await writeFile(path.join(cwd, 'out/docs.md'), '# Existing');
@@ -76,21 +83,71 @@ test('routing requires an explicit Markdown media range and respects q=0', () =>
 // A small local harness exercises the generated route definitions, not Vercel's CDN.
 async function serveArtifact(t, cwd, broken = false) {
   const output = path.join(cwd, '.vercel/output');
+  const staticDir = path.join(output, 'static');
   const { routes } = JSON.parse(await readFile(path.join(output, 'config.json'), 'utf8'));
+  const readStatic = async target => {
+    const rel = target.replace(/^\/+/, '');
+    const candidates = target === '/' ? ['index.html'] : target.endsWith('/') ? [`${rel}index.html`] : [rel, `${rel}/index.html`];
+    for (const candidate of candidates) {
+      try { return { file: candidate, body: await readFile(path.join(staticDir, candidate)) }; }
+      catch { /* try next candidate */ }
+    }
+    return null;
+  };
+  const matchesConditions = (items, headers, negate = false) => items.every(c => {
+    const raw = headers[c.key.toLowerCase()];
+    const hit = raw !== undefined && (c.value === undefined || new RegExp(c.value).test(raw));
+    return negate ? !hit : hit;
+  });
   const server = createServer(async (req, res) => {
     try {
-      const pathname = new URL(req.url, 'http://localhost').pathname;
-      let destination = pathname;
-      for (const r of routes) {
-        if (r.handle) break;
-        if (!new RegExp(r.src).test(pathname)) continue;
-        if (r.has && (broken || !r.has.every(h => new RegExp(h.value).test(req.headers[h.key] || '')))) continue;
-        for (const [k,v] of Object.entries(r.headers || {})) res.setHeader(k,v);
-        if (r.dest) { destination = r.dest; break; }
+      const url = new URL(req.url, 'http://localhost');
+      let current = url.pathname;
+      const fsIndex = routes.findIndex(r => r.handle === 'filesystem');
+      const pre = fsIndex >= 0 ? routes.slice(0, fsIndex) : routes;
+      const post = fsIndex >= 0 ? routes.slice(fsIndex + 1) : [];
+      const apply = (route, target) => {
+        const re = new RegExp(route.src);
+        if (!re.test(target)) return null;
+        if (route.methods && !route.methods.includes(req.method)) return null;
+        if (route.has && (broken || !matchesConditions(route.has, req.headers))) return null;
+        if (route.missing && !matchesConditions(route.missing, req.headers, true)) return null;
+        for (const [k, v] of Object.entries(route.headers || {})) {
+          res.setHeader(k, target.replace(re, v));
+        }
+        return {
+          status: route.status,
+          dest: route.dest ? target.replace(re, route.dest) : null,
+          continue: Boolean(route.continue),
+        };
+      };
+      for (const route of pre) {
+        const hit = apply(route, current);
+        if (!hit) continue;
+        if (hit.status && !hit.dest) {
+          res.statusCode = hit.status;
+          res.end();
+          return;
+        }
+        if (hit.dest) { current = hit.dest; if (!hit.continue) break; }
       }
-      const body = await readFile(path.join(output, 'static', destination));
-      if (!res.hasHeader('Content-Type')) res.setHeader('Content-Type', destination.endsWith('.md') ? 'text/markdown' : 'text/html');
-      res.end(body);
+      let found = await readStatic(current);
+      if (!found) {
+        for (const route of post) {
+          const hit = apply(route, current);
+          if (!hit) continue;
+          if (route.check && hit.dest) {
+            const checked = await readStatic(hit.dest);
+            if (checked) { found = checked; break; }
+            continue;
+          }
+          if (hit.status) res.statusCode = hit.status;
+          if (hit.dest) { found = await readStatic(hit.dest); break; }
+        }
+      }
+      if (!found) { res.writeHead(404); res.end('Not found'); return; }
+      if (!res.hasHeader('Content-Type')) res.setHeader('Content-Type', found.file.endsWith('.md') ? 'text/markdown; charset=utf-8' : 'text/html; charset=utf-8');
+      res.end(found.body);
     } catch { res.writeHead(404); res.end('Not found'); }
   });
   server.listen(0, '127.0.0.1');
@@ -347,4 +404,145 @@ test('Gauge attribution is confined to the generated index and can be disabled',
   await writeFile(configPath, JSON.stringify({ ...config, llms: false, attribution: true }));
   await build(cwd);
   assert.equal(await readFile(path.join(output, 'llms.txt'), 'utf8'), existing);
+});
+
+test('data-agent-only and data-agent-hidden control HTML vs Markdown output cleanly', async t => {
+  const cwd = await fixture(t);
+  await writeFile(
+    path.join(cwd, 'out/docs/index.html'),
+    '<!doctype html><html><head><title>Docs</title></head><body><main><h1>Docs</h1><p>Visible to all.</p><section data-agent-hidden>Interactive widget</section><div data-agent-only hidden><h2>Agent instructions</h2><p>Use <a href="/api">the API</a>.<span data-agent-hidden>Never in md</span></p></div><span hidden>Regular hidden UI</span></main></body></html>',
+  );
+  await writeFile(
+    path.join(cwd, 'out/preview/index.html'),
+    '<!doctype html><html><head><title>Preview</title></head><body><main><h1>Preview</h1><div data-agent-only hidden>Layout agent footer</div></main></body></html>',
+  );
+  await build(cwd);
+  const output = path.join(cwd, '.vercel/output/static');
+  const md = await readFile(path.join(output, 'docs.md'), 'utf8');
+  assert.match(md, /Visible to all\./);
+  assert.match(md, /## Agent instructions/);
+  assert.match(md, /https:\/\/example\.com\/api/);
+  assert.doesNotMatch(md, /Interactive widget|Never in md|Regular hidden UI/);
+
+  const html = await readFile(path.join(output, 'docs/index.html'), 'utf8');
+  assert.match(html, /Interactive widget/);
+  assert.doesNotMatch(html, /Agent instructions|data-agent-only/);
+
+  // Skipped/excluded HTML files also strip data-agent-only from shared layouts.
+  const previewHtml = await readFile(path.join(output, 'preview/index.html'), 'utf8');
+  assert.doesNotMatch(previewHtml, /Layout agent footer|data-agent-only/);
+
+  // Original export remains untouched.
+  assert.match(await readFile(path.join(cwd, 'out/docs/index.html'), 'utf8'), /data-agent-only/);
+
+  const site = await serveArtifact(t, cwd);
+  assert.equal((await check(site, ['/docs/'])).ok, true);
+
+  // Checker flags leaked data-agent-only elements in HTML.
+  await writeFile(path.join(output, 'docs/index.html'), `${html}<div data-agent-only>Leaked</div>`);
+  const leaked = await check(site, ['/docs/']);
+  assert.equal(leaked.ok, false);
+  assert.equal(leaked.pages[0].checks.find(c => c.name === 'No leaked agent-only elements').ok, false);
+});
+
+test('vercel.json redirects and headers compile ahead of Markdown negotiation and survive setup-vercel', async t => {
+  const { setupVercel } = await import('../src/index.js');
+  const cwd = await fixture(t);
+  const configPath = path.join(cwd, 'agent-readable.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  await writeFile(configPath, JSON.stringify({ ...config, userAgents: true }));
+  await writeFile(path.join(cwd, 'out/llms-full.txt'), 'Full content\n');
+  const vercelConfig = {
+    redirects: [
+      { source: '/about', destination: '/docs/', statusCode: 301 },
+      { source: '/about.md', destination: '/docs.md', statusCode: 301 },
+      { source: '/external', destination: 'https://docs.example.com/', permanent: true },
+      { source: '/old/:slug', destination: '/new/:slug/', permanent: false },
+    ],
+    headers: [
+      { source: '/llms-full.txt', headers: [{ key: 'Content-Type', value: 'text/plain; charset=utf-8' }] },
+    ],
+  };
+  await writeFile(path.join(cwd, 'vercel.json'), JSON.stringify(vercelConfig));
+  const updated = await setupVercel(cwd, 'npm run build:site');
+  assert.deepEqual(updated.redirects, vercelConfig.redirects);
+  assert.deepEqual(updated.headers, vercelConfig.headers);
+  await build(cwd);
+
+  const site = await serveArtifact(t, cwd);
+  // Redirects beat both Accept: text/markdown and User-Agent routing.
+  for (const headers of [{ Accept: 'text/html' }, { Accept: 'text/markdown' }, { 'User-Agent': 'curl/8' }]) {
+    const res = await fetch(`${site}/about`, { headers, redirect: 'manual' });
+    assert.equal(res.status, 301);
+    assert.equal(res.headers.get('location'), '/docs/');
+  }
+  const mdRedirect = await fetch(`${site}/about.md`, { redirect: 'manual' });
+  assert.equal(mdRedirect.status, 301);
+  assert.equal(mdRedirect.headers.get('location'), '/docs.md');
+
+  const extRedirect = await fetch(`${site}/external`, { redirect: 'manual' });
+  assert.equal(extRedirect.status, 308);
+  assert.equal(extRedirect.headers.get('location'), 'https://docs.example.com/');
+
+  const paramRedirect = await fetch(`${site}/old/guide`, { redirect: 'manual' });
+  assert.equal(paramRedirect.status, 307);
+  assert.equal(paramRedirect.headers.get('location'), '/new/guide/');
+
+  const llmsFull = await fetch(`${site}/llms-full.txt`);
+  assert.equal(llmsFull.status, 200);
+  assert.equal(llmsFull.headers.get('content-type'), 'text/plain; charset=utf-8');
+
+  // Invalid redirects fail validation cleanly.
+  await writeFile(path.join(cwd, 'vercel.json'), JSON.stringify({ redirects: [{ source: '/bad', destination: '//evil.com', statusCode: 301 }] }));
+  await assert.rejects(build(cwd), /root-relative/);
+});
+
+test('pattern routes stay constant for large sites and support trailingSlash redirects', async t => {
+  const many = Array.from({ length: 500 }, (_, i) => ({
+    route: i === 0 ? '/' : `/blog/post-${i}`,
+    file: i === 0 ? 'index.html' : `blog/post-${i}/index.html`,
+    markdown: i === 0 ? '/index.md' : `/blog/post-${i}.md`,
+  }));
+  const routes = routesFor(many, many, { userAgents: true, trailingSlash: true });
+  assert.ok(routes.length < 20, `Expected <20 routes for 500 pages, got ${routes.length}`);
+
+  const cwd = await fixture(t);
+  const configPath = path.join(cwd, 'agent-readable.json');
+  const config = JSON.parse(await readFile(configPath, 'utf8'));
+  await writeFile(configPath, JSON.stringify({ ...config, userAgents: true, trailingSlash: true }));
+  await build(cwd);
+
+  const site = await serveArtifact(t, cwd);
+  // Browser HTML request without trailing slash gets 308 redirect.
+  const htmlNoSlash = await fetch(`${site}/docs`, { headers: { Accept: 'text/html' }, redirect: 'manual' });
+  assert.equal(htmlNoSlash.status, 308);
+  assert.equal(htmlNoSlash.headers.get('location'), '/docs/');
+
+  // Markdown negotiation serves 200 directly without an extra redirect hop.
+  const mdAccept = await fetch(`${site}/docs`, { headers: { Accept: 'text/markdown' }, redirect: 'manual' });
+  assert.equal(mdAccept.status, 200);
+  assert.match(mdAccept.headers.get('content-type') || '', /text\/markdown/);
+
+  const mdCurl = await fetch(`${site}/docs`, { headers: { 'User-Agent': 'curl/8' }, redirect: 'manual' });
+  assert.equal(mdCurl.status, 200);
+  assert.match(mdCurl.headers.get('content-type') || '', /text\/markdown/);
+
+  // Direct .md files do not redirect.
+  const mdDirect = await fetch(`${site}/docs.md`, { redirect: 'manual' });
+  assert.equal(mdDirect.status, 200);
+
+  // Checker succeeds on both slash and non-slash forms.
+  assert.equal((await check(site, ['/', '/docs', '/docs/'])).ok, true);
+
+  // Duplicate excluded error pages emitted by Next.js trailingSlash exports (404.html + 404/index.html) are allowed.
+  await mkdir(path.join(cwd, 'out/404'), { recursive: true });
+  await writeFile(path.join(cwd, 'out/404.html'), '<main><h1>404</h1><div data-agent-only hidden>Strip me</div></main>');
+  await writeFile(path.join(cwd, 'out/404/index.html'), '<main><h1>404</h1><div data-agent-only hidden>Strip me</div></main>');
+  await build(cwd);
+  assert.doesNotMatch(await readFile(path.join(cwd, '.vercel/output/static/404.html'), 'utf8'), /data-agent-only/);
+  assert.doesNotMatch(await readFile(path.join(cwd, '.vercel/output/static/404/index.html'), 'utf8'), /data-agent-only/);
+
+  // Conflicting trailingSlash between agent-readable.json and vercel.json fails.
+  await writeFile(path.join(cwd, 'vercel.json'), JSON.stringify({ trailingSlash: false }));
+  await assert.rejects(build(cwd), /Conflicting trailingSlash/);
 });

@@ -12,7 +12,13 @@ export function convert(html, url, selector = 'main, article, [role="main"]', ex
   if (!root.length) throw new Error(`${url}: no content matching ${JSON.stringify(selector)}. Set contentSelector explicitly; body extraction is opt-in.`);
   if (!Array.isArray(excludeSelectors) || excludeSelectors.some(value => typeof value !== 'string' || !value.trim())) throw new Error('excludeSelectors must be an array of nonempty CSS selectors.');
   for (const selector of excludeSelectors) root.find(selector).remove();
-  root.find('script, style, noscript, nav, [hidden], [aria-hidden="true"], [data-agent-readable="exclude"]').remove();
+  // Remove agent-hidden regions first, then reveal data-agent-only regions before
+  // generic [hidden]/[aria-hidden] stripping removes hidden UI elements.
+  root.find('[data-agent-hidden], [data-agent-readable="exclude"]').remove();
+  const agentOnly = root.find('[data-agent-only]');
+  if (root.is('[data-agent-only]')) root.removeAttr('hidden').removeAttr('aria-hidden').removeAttr('data-agent-only');
+  agentOnly.removeAttr('hidden').removeAttr('aria-hidden').removeAttr('data-agent-only');
+  root.find('script, style, noscript, nav, [hidden], [aria-hidden="true"]').remove();
   root.find('a[href], img[src]').each((_, el) => {
     const attr = el.name === 'a' ? 'href' : 'src';
     const value = $(el).attr(attr);
@@ -33,8 +39,16 @@ export function convert(html, url, selector = 'main, article, [role="main"]', ex
   return { title, noindex, markdown: `---\n${metadata}\n---\n\n${body}\n` };
 }
 
+export function stripAgentOnly(html) {
+  if (!html.includes('data-agent-only')) return html;
+  const $ = load(html);
+  $('[data-agent-only]').remove();
+  return $.html();
+}
+
 export function addDiscovery(html, href) {
   const $ = load(html);
+  $('[data-agent-only]').remove();
   $('link[rel="alternate"][type="text/markdown"]').remove();
   $('head').append($('<link>').attr({ rel: 'alternate', type: 'text/markdown', href }));
   return $.html();
